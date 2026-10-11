@@ -46,7 +46,8 @@ async function shaLegacy(s){
   }catch(e){}
   return null;
 }
-function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';const us=getUsers();if(!us.length){if(localStorage.getItem('bon_bh'))return 'login';return 'setup'}return localStorage.getItem('bon_nolock')?'open':'login'}
+function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';const us=getUsers();if(!us.length){if(forceSetup||!backendUrl())return 'setup';return 'login'}return localStorage.getItem('bon_nolock')?'open':'login'}
+let forceSetup=false;
 // ===== قاعدة المستخدمين المركزية (نفس Apps Script) — دخول من أي هاتف/PC =====
 function backendUrl(){try{const v=($('scriptUrl')&&$('scriptUrl').value||'').trim();if(v)return v}catch(e){}try{return localStorage.getItem('scriptUrl')||''}catch(e){return ''}}
 async function apiU(action,body){
@@ -60,6 +61,11 @@ function upsertLocalUser(name,hash,role){
   const users=getUsers();const i=users.findIndex(u=>u.name===name);
   if(i>=0)users[i]={name,hash,role};else users.push({name,hash,role});
   saveUsers(users);
+}
+// backend رفض العملية (hash قديم/دور تبدل في جهاز آخر) => إعادة الدخول لتحديث الجلسة
+function needRelogin(){
+  toast('🔄 تبدلات الصلاحيات في السيرفر — سجل الدخول مجددا');
+  lock();
 }
 function unlock(){sessionStorage.setItem('bon_unlocked','1');refreshLock();showUser();claimLegacyStation();render();loadStation()}
 // ترحيل مرة واحدة: سجلات قديمة بلا سمية => لصاحب الجهاز (أول عامل يدخل)، إلا كان بدا عهد المسماة كانخليوها للأدمن
@@ -106,8 +112,14 @@ function refreshLock(){
   const m=lockMode();const users=getUsers();
   $('lockScreen').classList.toggle('hidden',m==='open');
   const dl=$('empDatalist');if(dl) dl.innerHTML=users.map(u=>`<option value="${u.name}">`).join('');
-  if(m==='setup'){$('lockTitle').textContent='🔐 أنشئ حساب الأدمن 👑';$('lockSub').textContent='أول حساب كيكون هو الأدمن — هو اللي غيضيف الموظفين';$('lockUser').hidden=false;$('lockPin2').hidden=false;$('lockGo').textContent='✅ إنشاء حساب الأدمن';$('lockSkip').hidden=false;$('lockForgot').hidden=true}
-  else if(m==='login'){$('lockTitle').textContent='🔒 تسجيل الدخول';$('lockSub').textContent='دخل الاسم الكامل وكلمة السر';$('lockUser').hidden=false;$('lockPin2').hidden=true;$('lockGo').textContent='🔓 دخول';$('lockSkip').hidden=true;$('lockForgot').hidden=false}
+  if(m==='setup'){$('lockTitle').textContent='🔐 أنشئ حساب الأدمن 👑';$('lockSub').textContent='أول حساب كيكون هو الأدمن — هو اللي غيضيف الموظفين';$('lockUser').hidden=false;$('lockPin2').hidden=false;$('lockGo').textContent='✅ إنشاء حساب الأدمن';$('lockSkip').hidden=false;$('lockForgot').hidden=true;$('lockNewAdmin').hidden=true}
+  else if(m==='login'){
+    const fresh=!getUsers().length;
+    $('lockTitle').textContent='🔒 تسجيل الدخول';
+    $('lockSub').textContent=fresh?'هاد الجهاز جديد — دخل بحسابك المسجل في السيرفر':'دخل الاسم الكامل وكلمة السر';
+    $('lockUser').hidden=false;$('lockPin2').hidden=true;$('lockGo').textContent='🔓 دخول';$('lockSkip').hidden=true;$('lockForgot').hidden=!fresh;
+    $('lockNewAdmin').hidden=!(fresh&&backendUrl());
+  }
   const c=getUser();if(c) $('logoutBtn').title='خروج '+c.name;
 }
 $('lockGo').onclick=async()=>{
@@ -124,6 +136,7 @@ $('lockGo').onclick=async()=>{
       toast('☁️ الحسابات كاينة في السيرفر — دخلو بحساباتكم');return;
     }
     saveUsers([{name,hash:h,role:'admin'}]);localStorage.removeItem('bon_nolock');localStorage.removeItem('bon_bh');
+    forceSetup=false;
     sessionStorage.setItem(CUR_KEY,name);
     $('lockPin').value='';$('lockPin2').value='';unlock();toast(back&&back.ok?'👑 مرحبا '+name+' — نتا الأدمن (☁️+📱)':'👑 مرحبا '+name+' — نتا الأدمن');
   }else{
@@ -151,6 +164,7 @@ $('lockGo').onclick=async()=>{
   }
 };
 $('lockSkip').onclick=()=>{localStorage.setItem('bon_nolock','1');unlock()};
+$('lockNewAdmin').onclick=()=>{forceSetup=true;$('lockMsg').textContent='';refreshLock()};
 $('lockForgot').onclick=()=>{
   if(!confirm('تصفر الحسابات وتنشئ أدمن جديد؟\nالبونات المحفوظة غتبقى.')) return;
   apiU('wipe',{by:(getUser()||{}).name,byHash:(getUser()||{}).hash});
@@ -180,9 +194,14 @@ $('myPass').onclick=async()=>{
   if(!u){toast('❌ الحساب ما لقيناهش');return}
   const nh=await sha(me.name+'::'+p1);
   const back=await apiU('setPass',{name:me.name,oldHash:me.hash,newHash:nh});
-  if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+  if(backErr(back))return;
   u.hash=nh;saveUsers(users);toast('✅ تبدلات كلمة السر ديالك'+(back&&back.ok?' (☁️)':''));
 };
+function backErr(back){
+  if(!back||back.ok) return false;
+  if(back.error==='forbidden'){needRelogin()}else toast('❌ السيرفر رفض ('+(back.error||'؟')+')');
+  return true;
+}
 // ===== Admin: add/remove employees (admin only — employees can't delete) =====
 function renderUsers(){
   const box=$('usersList');if(!box) return;
@@ -202,7 +221,7 @@ function renderUsers(){
     const nh=await sha(t.name+'::'+p1);
     const me=getUser();
     const back=await apiU('setPass',{name:t.name,newHash:nh,by:me.name,byHash:me.hash});
-    if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+    if(backErr(back))return;
     t.hash=nh;saveUsers(users);toast('✅ تبدلات كلمة سر '+t.name+(back&&back.ok?' (☁️)':''));
   }});
   box.querySelectorAll('[data-del]').forEach(b=>{b.onclick=async()=>{
@@ -211,7 +230,7 @@ function renderUsers(){
     if(!confirm('تحذف الموظف '+t.name+'؟')) return;
     const me=getUser();
     const back=await apiU('del',{name:t.name,by:me.name,byHash:me.hash});
-    if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+    if(backErr(back))return;
     saveUsers(getUsers().filter(u=>u.name!==t.name));renderUsers();render();toast('🗑️ تحذف '+t.name);
   }});
   box.querySelectorAll('[data-role]').forEach(b=>{b.onclick=async()=>{
@@ -221,12 +240,12 @@ function renderUsers(){
       if(adminCount()===1){toast('⛔ ما يمكنش تخفض آخر أدمن');return}
       if(!confirm('تخفض '+t.name+' لموظف؟')) return;
       const back=await apiU('setRole',{name:t.name,role:'employee',by:me.name,byHash:me.hash});
-      if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+      if(backErr(back))return;
       t.role='employee';toast('⬇️ ولا موظف: '+t.name);
     }else{
       if(!confirm('ترقي '+t.name+' لأدمن؟ (غتولي عندو كل الصلاحيات)')) return;
       const back=await apiU('setRole',{name:t.name,role:'admin',by:me.name,byHash:me.hash});
-      if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+      if(backErr(back))return;
       t.role='admin';toast('👑 ولا أدمن: '+t.name);
     }
     saveUsers(users);renderUsers();render();
@@ -241,7 +260,7 @@ $('addEmp').onclick=async()=>{
   const nh=await sha(name+'::'+p);
   const me=getUser();
   const back=await apiU('add',{name,hash:nh,role:'employee',by:me.name,byHash:me.hash});
-  if(back&&!back.ok){$('adminMsg').textContent='❌ السيرفر رفض ('+(back.error||'؟')+')';return}
+  if(backErr(back)){$('adminMsg').textContent=back&&back.error==='forbidden'?'🔄 سجل الدخول مجددا':'❌ السيرفر رفض ('+((back||{}).error||'؟')+')';return}
   const users=getUsers();users.push({name,hash:nh,role:'employee'});saveUsers(users);
   $('newEmpName').value='';$('newEmpPass').value='';$('adminMsg').textContent='✅ تزاد '+name+(back&&back.ok?' (☁️)':'');
   renderUsers();toast('✅ تزاد الموظف '+name);
