@@ -1,6 +1,7 @@
 // ===== Bon Archive → Google Drive WITHOUT Cloud Console =====
 // 1) Go to https://script.google.com → New project → paste this file → Deploy → New deployment → Web app → Execute as: Me → Who has access: Anyone → Copy URL
 // 2) Paste that URL in the app (tab Drive → Script URL) → Save + Upload works directly
+// NOTE: uses only Drive scope (already granted) — no extra authorization needed.
 
 function getOrCreate_(name, parent) {
   var it;
@@ -38,60 +39,57 @@ function doPost(e) {
   }
 }
 
-// ===== Central users database (login from any phone/PC) =====
+// ===== Central users database in a Drive JSON file (login from any phone/PC) =====
 function jOut(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON)}
-function dbSs_(){
-  var id=PropertiesService.getScriptProperties().getProperty('SSID');
-  var ss=null;
-  try{if(id)ss=SpreadsheetApp.openById(id)}catch(e){ss=null}
-  if(!ss){ss=SpreadsheetApp.create('BonArchiveDB');PropertiesService.getScriptProperties().setProperty('SSID',ss.getId())}
-  return ss;
+function usersFile_(){
+  var it=DriveApp.getFilesByName('bon-users-db.json');
+  if(it.hasNext())return it.next();
+  return DriveApp.createFile('bon-users-db.json','[]','application/json');
 }
-function usersSheet_(){
-  var sh=dbSs_().getSheetByName('Users');
-  if(!sh){sh=dbSs_().insertSheet('Users');sh.appendRow(['name','hash','role'])}
-  return sh;
+function readUsers_(){
+  try{var a=JSON.parse(usersFile_().getBlob().getDataAsString());return Array.isArray(a)?a:[]}catch(e){return[]}
 }
-function userRow_(sh,name){
-  var v=sh.getDataRange().getValues();
-  for(var i=1;i<v.length;i++){if(String(v[i][0])===String(name))return {i:i+1,row:v[i]}}
-  return null;
-}
-function isAdmin_(sh,name,hash){
-  if(!name||!hash)return false;
-  var u=userRow_(sh,name);
-  return !!(u&&String(u.row[1])===String(hash)&&u.row[2]==='admin');
-}
+function writeUsers_(a){usersFile_().setContent(JSON.stringify(a))}
+function findU_(arr,name){for(var i=0;i<arr.length;i++){if(String(arr[i].name)===String(name))return i}return -1}
+function countAdm_(arr){var c=0;for(var i=0;i<arr.length;i++)if(arr[i].role==='admin')c++;return c}
 function userApi_(d){
-  var sh=usersSheet_(),a=d.action;
+  var a=d.action;
   if(a==='ping')return jOut({ok:true});
-  if(a==='setupAdmin'){
-    if(sh.getLastRow()>1)return jOut({ok:false,error:'exists'});
-    sh.appendRow([d.name,d.hash,'admin']);return jOut({ok:true,role:'admin'});
-  }
-  if(a==='login'){
-    var u=userRow_(sh,d.name);
-    if(u&&String(u.row[1])===String(d.hash))return jOut({ok:true,role:u.row[2]});
-    return jOut({ok:false});
-  }
-  if(a==='syncUp'){
-    if(sh.getLastRow()===1&&d.users&&d.users.length){
-      d.users.forEach(function(x,i){sh.appendRow([x.name,x.hash,i===0?'admin':(x.role||'employee')])});
-      return jOut({ok:true,n:d.users.length});
+  var lock=LockService.getScriptLock();
+  try{lock.waitLock(10000)}catch(e){return jOut({ok:false,error:'busy'})}
+  try{
+    if(a==='setupAdmin'){
+      var u0=readUsers_();
+      if(u0.length)return jOut({ok:false,error:'exists'});
+      u0.push({name:d.name,hash:d.hash,role:'admin'});writeUsers_(u0);return jOut({ok:true,role:'admin'});
     }
-    return jOut({ok:false,error:'not-empty'});
-  }
-  if(a==='setPass'){
-    var s=userRow_(sh,d.name);if(!s)return jOut({ok:false});
-    var selfOk=d.oldHash&&String(s.row[1])===String(d.oldHash);
-    if(!selfOk&&!isAdmin_(sh,d.by,d.byHash))return jOut({ok:false,error:'forbidden'});
-    sh.getRange(s.i,2).setValue(d.newHash);return jOut({ok:true});
-  }
-  if(!isAdmin_(sh,d.by,d.byHash))return jOut({ok:false,error:'forbidden'});
-  if(a==='list'){var v=sh.getDataRange().getValues(),out=[];for(var i=1;i<v.length;i++)out.push({name:v[i][0],role:v[i][2]});return jOut({ok:true,users:out})}
-  if(a==='add'){if(userRow_(sh,d.name))return jOut({ok:false,error:'exists'});sh.appendRow([d.name,d.hash,d.role||'employee']);return jOut({ok:true})}
-  if(a==='del'){var t=userRow_(sh,d.name);if(!t)return jOut({ok:false});var all=sh.getDataRange().getValues(),adm=0;for(var j=1;j<all.length;j++)if(all[j][2]==='admin')adm++;if(t.row[2]==='admin'&&adm<=1)return jOut({ok:false,error:'last-admin'});sh.deleteRow(t.i);return jOut({ok:true})}
-  if(a==='setRole'){var t2=userRow_(sh,d.name);if(!t2)return jOut({ok:false});if(d.role!=='admin'){var a2=sh.getDataRange().getValues(),c2=0;for(var k=1;k<a2.length;k++)if(a2[k][2]==='admin')c2++;if(t2.row[2]==='admin'&&c2<=1)return jOut({ok:false,error:'last-admin'})}sh.getRange(t2.i,3).setValue(d.role);return jOut({ok:true})}
-  if(a==='wipe'){var lr=sh.getLastRow();if(lr>1)sh.deleteRows(2,lr-1);return jOut({ok:true})}
-  return jOut({ok:false,error:'unknown'});
+    if(a==='login'){
+      var u1=readUsers_(),i1=findU_(u1,d.name);
+      if(i1>=0&&String(u1[i1].hash)===String(d.hash))return jOut({ok:true,role:u1[i1].role});
+      return jOut({ok:false});
+    }
+    if(a==='syncUp'){
+      var u2=readUsers_();
+      if(u2.length||!d.users||!d.users.length)return jOut({ok:false,error:'not-empty'});
+      var out=d.users.map(function(x,i){return {name:x.name,hash:x.hash,role:i===0?'admin':(x.role||'employee')}});
+      writeUsers_(out);return jOut({ok:true,n:out.length});
+    }
+    if(a==='setPass'){
+      var u3=readUsers_(),i3=findU_(u3,d.name);if(i3<0)return jOut({ok:false});
+      var selfOk=d.oldHash&&String(u3[i3].hash)===String(d.oldHash);
+      var iby=findU_(u3,d.by);
+      var admOk=iby>=0&&String(u3[iby].hash)===String(d.byHash)&&u3[iby].role==='admin';
+      if(!selfOk&&!admOk)return jOut({ok:false,error:'forbidden'});
+      u3[i3].hash=d.newHash;writeUsers_(u3);return jOut({ok:true});
+    }
+    var all=readUsers_(),ib=findU_(all,d.by);
+    var okAdm=ib>=0&&String(all[ib].hash)===String(d.byHash)&&all[ib].role==='admin';
+    if(!okAdm)return jOut({ok:false,error:'forbidden'});
+    if(a==='list'){var li=[];for(var i=0;i<all.length;i++)li.push({name:all[i].name,role:all[i].role});return jOut({ok:true,users:li})}
+    if(a==='add'){if(findU_(all,d.name)>=0)return jOut({ok:false,error:'exists'});all.push({name:d.name,hash:d.hash,role:d.role||'employee'});writeUsers_(all);return jOut({ok:true})}
+    if(a==='del'){var id=findU_(all,d.name);if(id<0)return jOut({ok:false});if(all[id].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all.splice(id,1);writeUsers_(all);return jOut({ok:true})}
+    if(a==='setRole'){var ir=findU_(all,d.name);if(ir<0)return jOut({ok:false});if(d.role!=='admin'&&all[ir].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all[ir].role=d.role;writeUsers_(all);return jOut({ok:true})}
+    if(a==='wipe'){writeUsers_([]);return jOut({ok:true})}
+    return jOut({ok:false,error:'unknown'});
+  }finally{try{lock.releaseLock()}catch(e){}}
 }
