@@ -1,6 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
+const APP_VER='v59';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -32,7 +33,7 @@ function liveReceipts(){return receipts.filter(r=>!r.del)}
 function totalsBase(){const n=scopeName();const l=liveReceipts();return n?l.filter(r=>(r.takenBy||'—')===n):l}
 function listPool(){const n=scopeName();const l=isAdmin()?receipts:liveReceipts();return n?l.filter(r=>(r.takenBy||'—')===n):l}
 function currentUser(){const u=getUser();return u?u.name:'زائر'}
-function showUser(){const u=getUser();$('driveStatus').textContent=(u?(u.role==='admin'?'👑 ':'👤 ')+u.name:'👤 زائر')+' • 📱 جاهز للربط مع Google Drive'}
+function showUser(){const u=getUser();$('driveStatus').textContent=(u?(u.role==='admin'?'👑 ':'👤 ')+u.name:'👤 زائر')+' • 📱 جاهز للربط مع Google Drive';if($('appVer'))$('appVer').textContent='إصدار التطبيق: '+APP_VER}
 // --- Login / user+password lock ---
 // NOTE: single hash fn everywhere (works on http LAN + https). Old SHA-256 accounts auto-migrate on next successful login.
 function fallbackHash(s){let h1=0xdeadbeef,h2=0x41c6ce57;for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return 'fb'+(h2>>>0).toString(16)+(h1>>>0).toString(16)}
