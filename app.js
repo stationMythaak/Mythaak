@@ -46,7 +46,21 @@ async function shaLegacy(s){
   }catch(e){}
   return null;
 }
-function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';return getUsers().length===0?'setup':(localStorage.getItem('bon_nolock')?'open':'login')}
+function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';const us=getUsers();if(!us.length){if(localStorage.getItem('bon_bh'))return 'login';return 'setup'}return localStorage.getItem('bon_nolock')?'open':'login'}
+// ===== قاعدة المستخدمين المركزية (نفس Apps Script) — دخول من أي هاتف/PC =====
+function backendUrl(){try{const v=($('scriptUrl')&&$('scriptUrl').value||'').trim();if(v)return v}catch(e){}try{return localStorage.getItem('scriptUrl')||''}catch(e){return ''}}
+async function apiU(action,body){
+  const url=backendUrl();if(!url)return null;
+  try{
+    const r=await fetch(url,{method:'POST',body:JSON.stringify({action,...(body||{})})});
+    return await r.json();
+  }catch(e){return null}
+}
+function upsertLocalUser(name,hash,role){
+  const users=getUsers();const i=users.findIndex(u=>u.name===name);
+  if(i>=0)users[i]={name,hash,role};else users.push({name,hash,role});
+  saveUsers(users);
+}
 function unlock(){sessionStorage.setItem('bon_unlocked','1');refreshLock();showUser();claimLegacyStation();render();loadStation()}
 // ترحيل مرة واحدة: سجلات قديمة بلا سمية => لصاحب الجهاز (أول عامل يدخل)، إلا كان بدا عهد المسماة كانخليوها للأدمن
 function claimLegacyStation(){
@@ -102,13 +116,33 @@ $('lockGo').onclick=async()=>{
   if(p.length<4){$('lockMsg').textContent='⚠️ كلمة السر خاصها 4 حروف على الأقل';return}
   if(m==='setup'){
     if(p!==$('lockPin2').value){$('lockMsg').textContent='⚠️ التأكيد مختلف';return}
-    saveUsers([{name,hash:await sha(name+'::'+p),role:'admin'}]);localStorage.removeItem('bon_nolock');
+    const h=await sha(name+'::'+p);
+    const back=await apiU('setupAdmin',{name,hash:h});
+    if(back&&back.ok===false&&back.error==='exists'){
+      localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
+      $('lockPin').value='';$('lockPin2').value='';$('lockMsg').textContent='';refreshLock();
+      toast('☁️ الحسابات كاينة في السيرفر — دخلو بحساباتكم');return;
+    }
+    saveUsers([{name,hash:h,role:'admin'}]);localStorage.removeItem('bon_nolock');localStorage.removeItem('bon_bh');
     sessionStorage.setItem(CUR_KEY,name);
-    $('lockPin').value='';$('lockPin2').value='';unlock();toast('👑 مرحبا '+name+' — نتا الأدمن');
+    $('lockPin').value='';$('lockPin2').value='';unlock();toast(back&&back.ok?'👑 مرحبا '+name+' — نتا الأدمن (☁️+📱)':'👑 مرحبا '+name+' — نتا الأدمن');
   }else{
+    const h=await sha(name+'::'+p);
+    // 1) السيرفر أولا (نفس الحساب في أي هاتف)
+    if(backendUrl()){
+      const r=await apiU('login',{name,hash:h});
+      if(r&&r.ok){
+        upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
+        sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
+        if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))})}
+        return;
+      }
+      if(r===null)toast('📱 بلا اتصال — دخول محلي');
+      else if(r&&r.ok===false&&!getUsers().some(x=>x.name===name)){ $('lockMsg').textContent='❌ هاد الاسم ما مسجلش — طلب من الأدمن يضيفك';return}
+    }
+    // 2) المحلي (احتياط/بلا سيرفر)
     const u=getUsers().find(x=>x.name===name);
     if(!u){$('lockMsg').textContent='❌ هاد الاسم ما مسجلش — طلب من الأدمن يضيفك';return}
-    const h=await sha(name+'::'+p);
     if(u.hash===h){sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('🔓 مرحبا بعودتك '+name);return}
     // auto-migrate old SHA-256 hash accounts
     const legacy=await shaLegacy(name+'::'+p);
@@ -119,7 +153,8 @@ $('lockGo').onclick=async()=>{
 $('lockSkip').onclick=()=>{localStorage.setItem('bon_nolock','1');unlock()};
 $('lockForgot').onclick=()=>{
   if(!confirm('تصفر الحسابات وتنشئ أدمن جديد؟\nالبونات المحفوظة غتبقى.')) return;
-  localStorage.removeItem(USERS_KEY);localStorage.removeItem(USER_KEY);localStorage.removeItem(PIN_KEY);localStorage.removeItem('bon_nolock');
+  apiU('wipe',{by:(getUser()||{}).name,byHash:(getUser()||{}).hash});
+  localStorage.removeItem(USERS_KEY);localStorage.removeItem(USER_KEY);localStorage.removeItem(PIN_KEY);localStorage.removeItem('bon_nolock');localStorage.removeItem('bon_bh');
   $('lockUser').value='';$('lockPin').value='';$('lockPin2').value='';$('lockMsg').textContent='';
   lock();toast('🔄 تصفر — أنشئ حساب الأدمن');
 };
@@ -143,7 +178,10 @@ $('myPass').onclick=async()=>{
   if(p1!==p2){toast('⚠️ التأكيد مختلف');return}
   const users=getUsers();const u=users.find(x=>x.name===me.name);
   if(!u){toast('❌ الحساب ما لقيناهش');return}
-  u.hash=await sha(me.name+'::'+p1);saveUsers(users);toast('✅ تبدلات كلمة السر ديالك');
+  const nh=await sha(me.name+'::'+p1);
+  const back=await apiU('setPass',{name:me.name,oldHash:me.hash,newHash:nh});
+  if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+  u.hash=nh;saveUsers(users);toast('✅ تبدلات كلمة السر ديالك'+(back&&back.ok?' (☁️)':''));
 };
 // ===== Admin: add/remove employees (admin only — employees can't delete) =====
 function renderUsers(){
@@ -161,22 +199,34 @@ function renderUsers(){
     const p2=prompt('أكد كلمة السر الجديدة لـ '+t.name+' :');
     if(p2===null) return;
     if(p1!==p2){toast('⚠️ التأكيد مختلف');return}
-    t.hash=await sha(t.name+'::'+p1);saveUsers(users);toast('✅ تبدلات كلمة سر '+t.name);
+    const nh=await sha(t.name+'::'+p1);
+    const me=getUser();
+    const back=await apiU('setPass',{name:t.name,newHash:nh,by:me.name,byHash:me.hash});
+    if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
+    t.hash=nh;saveUsers(users);toast('✅ تبدلات كلمة سر '+t.name+(back&&back.ok?' (☁️)':''));
   }});
-  box.querySelectorAll('[data-del]').forEach(b=>{b.onclick=()=>{
+  box.querySelectorAll('[data-del]').forEach(b=>{b.onclick=async()=>{
     const t=getUsers()[+b.dataset.del];if(!t) return;
     if(t.role==='admin'&&adminCount()===1){toast('⛔ ما يمكنش تحذف آخر أدمن');return}
     if(!confirm('تحذف الموظف '+t.name+'؟')) return;
+    const me=getUser();
+    const back=await apiU('del',{name:t.name,by:me.name,byHash:me.hash});
+    if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
     saveUsers(getUsers().filter(u=>u.name!==t.name));renderUsers();render();toast('🗑️ تحذف '+t.name);
   }});
-  box.querySelectorAll('[data-role]').forEach(b=>{b.onclick=()=>{
+  box.querySelectorAll('[data-role]').forEach(b=>{b.onclick=async()=>{
     const users=getUsers();const t=users[+b.dataset.role];if(!t) return;
+    const me=getUser();
     if(t.role==='admin'){
       if(adminCount()===1){toast('⛔ ما يمكنش تخفض آخر أدمن');return}
       if(!confirm('تخفض '+t.name+' لموظف؟')) return;
+      const back=await apiU('setRole',{name:t.name,role:'employee',by:me.name,byHash:me.hash});
+      if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
       t.role='employee';toast('⬇️ ولا موظف: '+t.name);
     }else{
       if(!confirm('ترقي '+t.name+' لأدمن؟ (غتولي عندو كل الصلاحيات)')) return;
+      const back=await apiU('setRole',{name:t.name,role:'admin',by:me.name,byHash:me.hash});
+      if(back&&!back.ok){toast('❌ السيرفر رفض ('+(back.error||'؟')+')');return}
       t.role='admin';toast('👑 ولا أدمن: '+t.name);
     }
     saveUsers(users);renderUsers();render();
@@ -188,14 +238,19 @@ $('addEmp').onclick=async()=>{
   if(name.length<2){$('adminMsg').textContent='⚠️ دخل الاسم الكامل';return}
   if(p.length<4){$('adminMsg').textContent='⚠️ كلمة السر 4+ حروف';return}
   if(getUsers().some(u=>u.name===name)){$('adminMsg').textContent='⚠️ هاد الاسم مسجل already';return}
-  const users=getUsers();users.push({name,hash:await sha(name+'::'+p),role:'employee'});saveUsers(users);
-  $('newEmpName').value='';$('newEmpPass').value='';$('adminMsg').textContent='✅ تزاد '+name;
+  const nh=await sha(name+'::'+p);
+  const me=getUser();
+  const back=await apiU('add',{name,hash:nh,role:'employee',by:me.name,byHash:me.hash});
+  if(back&&!back.ok){$('adminMsg').textContent='❌ السيرفر رفض ('+(back.error||'؟')+')';return}
+  const users=getUsers();users.push({name,hash:nh,role:'employee'});saveUsers(users);
+  $('newEmpName').value='';$('newEmpPass').value='';$('adminMsg').textContent='✅ تزاد '+name+(back&&back.ok?' (☁️)':'');
   renderUsers();toast('✅ تزاد الموظف '+name);
 };
 $('resetUsers').onclick=()=>{
   if(!isAdmin()){toast('⛔ للأدمن فقط');return}
   if(!confirm('تصفر ALL الحسابات؟\nغيبقى حساب أدمن واحد جديد تنشئو من بعد.\nالبونات غتبقى محفوظة.')) return;
-  localStorage.removeItem(USERS_KEY);localStorage.removeItem(USER_KEY);localStorage.removeItem(PIN_KEY);localStorage.removeItem('bon_nolock');
+  const me=getUser();apiU('wipe',{by:me.name,byHash:me.hash});
+  localStorage.removeItem(USERS_KEY);localStorage.removeItem(USER_KEY);localStorage.removeItem(PIN_KEY);localStorage.removeItem('bon_nolock');localStorage.removeItem('bon_bh');
   lock();toast('🧹 تصفر — أنشئ حساب الأدمن الوحيد');
 };
 $('lockPin').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
