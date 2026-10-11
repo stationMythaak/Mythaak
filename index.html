@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>أرشيف البونات | Bon Archive PWA</title>
+<meta name="theme-color" content="#DD1C2A">
+<meta name="description" content="صور البون، أرشفه بالشركة والرقم والتاريخ، وتجميع شهري + رفع تلقائي Google Drive">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+</head>
+<body>
+<div id="lockScreen" class="lock">
+  <div class="lock-card">
+    <div class="lock-logo"><img src="logo.png" alt="logo"></div>
+    <h2 id="lockTitle">🔒 مرحبا بعودتك</h2>
+    <p id="lockSub" class="hint">دخل معلومات الدخول باش تحل الأرشيف</p>
+    <input id="lockUser" type="text" list="empDatalist" placeholder="الاسم الكامل للموظف" autocomplete="username">
+    <datalist id="empDatalist"></datalist>
+    <input id="lockPin" type="password" placeholder="كلمة السر" autocomplete="current-password" dir="ltr">
+    <input id="lockPin2" type="password" placeholder="أكد كلمة السر" autocomplete="new-password" dir="ltr" hidden>
+    <button id="lockGo" class="btn primary big">🔓 دخول</button>
+    <button id="lockForgot" class="btn ghost sm">❓ نسيت كلمة السر؟ reset</button>
+    <button id="lockSkip" class="btn ghost sm">تخطي (بلا حساب)</button>
+    <p id="lockMsg" class="hint"></p>
+  </div>
+</div>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo"><img src="logo.png" alt="logo"></div>
+    <div>
+      <h1>أرشيف البونات الذكي</h1>
+      <p id="driveStatus" class="subtitle">📱 وضع محلي • جاهز للربط مع Google Drive</p>
+    </div>
+  </div>
+  <button id="installBtn" class="btn-install" hidden>⬇️ تثبيت</button>
+  <button id="logoutBtn" class="btn ghost sm" title="قفل">🔒</button>
+</header>
+
+<section class="stats">
+  <div class="stat"><span id="stMonth">0</span><label>بونات هذا الشهر</label></div>
+  <div class="stat highlight"><span id="stAmount">0 درهم</span><label>مجموع المبالغ</label></div>
+  <div class="stat"><span id="stTotal">0</span><label>المجموع الكلي</label></div>
+</section>
+
+<nav class="tabs">
+  <button data-tab="add" class="active">📸 إضافة</button>
+  <button data-tab="archive">🗂️ الأرشيف</button>
+  <button data-tab="folders">📁 دوسيات الشهور</button>
+  <button data-tab="drive">☁️ Drive</button>
+</nav>
+
+<main>
+<!-- ADD -->
+<section id="tab-add" class="tab active">
+  <div class="card camera-card">
+    <h2>1️⃣ صوّر البون أو الفاتورة</h2>
+    <div id="dropZone" class="drop">
+      <input type="file" id="fileInput" accept="image/*" capture="environment" hidden>
+      <div id="placeholder">
+        <div class="cam-icon">📷</div>
+        <p><b>اضغط لفتح الكاميرا</b><br>أو اسحب صورة هنا / اختر من المعرض</p>
+        <div class="row-btns">
+          <button class="btn primary" onclick="document.getElementById('fileInput').click()">📸 كاميرا / معرض</button>
+          <label class="btn ghost file-label">📁 بدون كاميرا<input type="file" id="fileInput2" accept="image/*" hidden></label>
+        </div>
+      </div>
+      <img id="preview" hidden alt="preview">
+      <button id="clearImg" class="btn danger sm" hidden>✖ إزالة الصورة</button>
+    </div>
+    <button id="ocrBtn" class="btn ocr" disabled>✨ قراءة تلقائية OCR (التاريخ + المبلغ + الرقم)</button>
+    <button id="liveBtn" class="btn ocr">🎥 مسح مباشر — تحديد الورقة في الكاميرا</button>
+<div id="liveScan" class="livescan" hidden>
+  <div class="livebox">
+    <video id="liveVideo" playsinline muted autoplay></video>
+    <canvas id="liveOverlay"></canvas>
+  </div>
+  <p id="liveMsg" class="hint" style="color:#FFE9A8">وجّه الكاميرا للورقة — الالتقاط تلقائي ملي تثبت ✅</p>
+  <div class="row" style="justify-content:center">
+    <button id="liveShot" class="btn primary big" style="max-width:220px">📸 التقاط</button>
+    <button id="liveClose" class="btn danger">✖</button>
+  </div>
+</div>
+    <p id="ocrMsg" class="hint"></p>
+    <details id="ocrDetails" hidden><summary>📝 النص المستخرج (تحقق منه)</summary><p id="ocrText" dir="auto" style="white-space:pre-wrap;font-size:12px"></p></details>
+  </div>
+
+  <div class="card">
+    <h2>2️⃣ معلومات الأرشفة</h2>
+    <div class="grid2">
+      <label>اسم الشركة *<span class="inputmic"><input id="fCompany" placeholder="كتب الحروف الأولى واختار..." autocomplete="off"><button id="hearCompany" type="button" class="btn ghost sm" title="اسمع النطق">🔊</button><button id="micCompany" type="button" class="btn ghost sm" title="بحث بالصوت">🎤</button></span><div id="coSugg" class="sugg" hidden></div></label>
+      <datalist id="companyList"></datalist>
+      <label id="lblNumber">رقم البون / الفاتورة *<input id="fNumber" placeholder="مثال: F-2026-123" dir="ltr"></label>
+    </div>
+    <div class="grid2">
+      <label>التاريخ *<input id="fDate" type="date"></label>
+      <label>المبلغ (DH)<input id="fAmount" type="number" step="0.01" placeholder="0.00" dir="ltr"></label>
+    </div>
+    <div class="grid2" id="advRow">
+      <label>النوع<select id="fType"><option>بون Bon</option><option>فاتورة Facture</option><option>Devis</option><option>Reçu</option><option>أخرى</option></select></label>
+      <label>الأداء <span class="paywrap"><select id="fPay"><option>نقدا Espèce</option><option>بطاقة Carte</option><option>تحويل Virement</option><option>شيك Chèque</option><option>كريدي Crédit</option><option>بطاقة طاقتي Carte Taqati</option><option>بطاقة شيل Carte Shell</option></select><img id="payLogo" src="shell-pay.png" alt="Shell" hidden></span></label>
+    </div>
+    <label>ملاحظات<input id="fNote" placeholder="اختياري..."></label>
+    <div class="filename">📄 اسم الملف التلقائي:<code id="autoName">—</code></div>
+    <div class="filename">📁 دوسي التخزين:<code id="autoFolder">Bons_Archivage / 2026 / 10-Octobre / 07 / الموظف</code></div>
+    <div class="actions">
+      <button id="saveLocal" class="btn primary big">💾 حفظ في الأرشيف</button>
+      <button id="saveDrive" class="btn drive big">☁️ حفظ + رفع Drive</button>
+    </div>
+    <div class="actions">
+      <button id="savePdf" class="btn big">📄 تحويل الصورة إلى PDF</button>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHIVE -->
+<section id="tab-archive" class="tab">
+  <div class="card toolbar">
+    <span class="inputmic"><input id="search" placeholder="🔍 بحث: شركة، رقم، مبلغ..."><button id="micSearch" type="button" class="btn ghost sm" title="بحث بالصوت">🎤</button></span>
+    <div id="creditBar" class="creditbar" hidden></div>
+    <div class="row">
+      <input id="filterMonth" type="month">
+      <select id="filterEmp" style="flex:1;min-width:140px"><option value="">👥 كل الموظفين</option></select>
+      <button id="clearFilter" class="btn ghost sm">عرض الكل</button>
+      <button id="exportCsv" class="btn ghost sm">📗 Excel</button>
+      <label class="btn ghost sm file-label">📥 استيراد<input type="file" id="importExcel" accept=".xlsx,.xls" hidden></label>
+      <button id="printBtn" class="btn ghost sm">🖨️ طباعة</button>
+    </div>
+  </div>
+  <div id="list" class="list"></div>
+</section>
+
+<!-- HISAB -->
+<section id="tab-hisab" class="tab">
+  <div class="card" style="border:2px solid #f59e0b">
+    <h2>⛽ حساب المحطة — العدادات</h2>
+    <div class="row"><label>التاريخ <input id="stDate" type="date"></label>
+      <button id="stClear" class="btn danger sm">🧹 مسح اليوم</button>
+      <button id="stExcel" class="btn ghost sm">📗 Excel الحساب</button>
+    </div>
+    <div id="stAdminRow" hidden>
+      <p class="hint">👑 حسابات العمال — ضغط على السمية باش يبان لك حسابو:</p>
+      <div id="stEmps" class="row"></div>
+      <p id="stViewMsg" class="hint"></p>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="stable">
+      <tr><th>المنتج 🔒</th><td><input id="st-name-0" value="F.S GASOIL"></td><td><input id="st-name-1" value="V.SSP"></td><td><input id="st-name-2" value="V.P DIESEL"></td><td><input id="st-name-3" value="F.S SANS PLOMBE"></td><td><input id="st-name-4" value="F.S GASOIL"></td><td><input id="st-name-5" value="V.SSP"></td><td><input id="st-name-6" value="V.P DIESEL"></td><td><input id="st-name-7" value="F.S SANS PLOMBE"></td><td><input id="st-name-8" value="mélange"></td></tr>
+      <tr><th>العداد الثاني (الكبير)</th><td><input id="st-b-0" type="number" step="any" dir="ltr"></td><td><input id="st-b-1" type="number" step="any" dir="ltr"></td><td><input id="st-b-2" type="number" step="any" dir="ltr"></td><td><input id="st-b-3" type="number" step="any" dir="ltr"></td><td><input id="st-b-4" type="number" step="any" dir="ltr"></td><td><input id="st-b-5" type="number" step="any" dir="ltr"></td><td><input id="st-b-6" type="number" step="any" dir="ltr"></td><td><input id="st-b-7" type="number" step="any" dir="ltr"></td><td><input id="st-b-8" type="number" step="any" dir="ltr"></td></tr>
+      <tr><th>العداد الأول</th><td><input id="st-a-0" type="number" step="any" dir="ltr"></td><td><input id="st-a-1" type="number" step="any" dir="ltr"></td><td><input id="st-a-2" type="number" step="any" dir="ltr"></td><td><input id="st-a-3" type="number" step="any" dir="ltr"></td><td><input id="st-a-4" type="number" step="any" dir="ltr"></td><td><input id="st-a-5" type="number" step="any" dir="ltr"></td><td><input id="st-a-6" type="number" step="any" dir="ltr"></td><td><input id="st-a-7" type="number" step="any" dir="ltr"></td><td><input id="st-a-8" type="number" step="any" dir="ltr"></td></tr>
+      <tr><th>الثمن (DH/L)</th><td><input id="st-p-0" type="number" step="any" dir="ltr"></td><td><input id="st-p-1" type="number" step="any" dir="ltr"></td><td><input id="st-p-2" type="number" step="any" dir="ltr"></td><td><input id="st-p-3" type="number" step="any" dir="ltr"></td><td><input id="st-p-4" type="number" step="any" dir="ltr"></td><td><input id="st-p-5" type="number" step="any" dir="ltr"></td><td><input id="st-p-6" type="number" step="any" dir="ltr"></td><td><input id="st-p-7" type="number" step="any" dir="ltr"></td><td><input id="st-p-8" type="number" step="any" dir="ltr"></td></tr>
+      <tr class="auto"><th>الكمية (L)<br><small>الثاني − الأول</small></th><td><b id="st-q-0">0</b></td><td><b id="st-q-1">0</b></td><td><b id="st-q-2">0</b></td><td><b id="st-q-3">0</b></td><td><b id="st-q-4">0</b></td><td><b id="st-q-5">0</b></td><td><b id="st-q-6">0</b></td><td><b id="st-q-7">0</b></td><td><b id="st-q-8">0</b></td></tr>
+      <tr class="auto"><th>المبلغ (DH)<br><small>الكمية × الثمن</small></th><td><b id="st-m-0">0</b></td><td><b id="st-m-1">0</b></td><td><b id="st-m-2">0</b></td><td><b id="st-m-3">0</b></td><td><b id="st-m-4">0</b></td><td><b id="st-m-5">0</b></td><td><b id="st-m-6">0</b></td><td><b id="st-m-7">0</b></td><td><b id="st-m-8">0</b></td></tr>
+    </table>
+    </div>
+    <div class="filename" style="font-size:16px">💰 المجموع العام: <code id="st-total">0 DH</code></div>
+  </div>
+  <div class="card">
+    <h2>🧮 حساب اليوم — <span id="hisabDate"></span></h2>
+    <div class="row"><label>التاريخ <input id="hisabDay" type="date"></label></div>
+    <div class="stats" style="padding:0">
+      <div class="stat"><input id="hOther" type="number" step="any" dir="ltr" placeholder="0"><label>بيع آخر (DH)</label></div>
+      <div class="stat highlight"><span id="hTotal">0 درهم</span><label>مجموع اليوم</label></div>
+      <div class="stat"><span id="hCredit">0</span><label>المجموع الكلي (العدادات − البونات + بيع آخر)</label></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>📚 أرشيف حسابات المحطة</h2>
+    <div id="stArchive"></div>
+  </div>
+  <div class="card">
+    <h2>💵 تقسيم اليوم حسب الأداء</h2>
+    <div id="hPay" class="folders"></div>
+  </div>
+  <div class="card">
+    <h2>👥 تقسيم اليوم حسب الموظف</h2>
+    <div id="hEmp" class="folders"></div>
+  </div>
+  <div class="card">
+    <h2>🧾 بونات اليوم</h2>
+    <div id="hList"></div>
+    <div class="actions">
+      <button id="expToday" class="btn primary sm">📗 Excel اليوم</button>
+      <button id="printToday" class="btn ghost sm">🖨️ طباعة</button>
+    </div>
+  </div>
+</section>
+
+<!-- FOLDERS -->
+<section id="tab-folders" class="tab">
+  <div class="card" style="border:2px solid #7c3aed">
+    <h2>👑 إضافة موظف (للأدمن فقط)</h2>
+    <p class="hint">الأدمن كيضيف الموظفين هنا. الموظف كيدخل بالاسم وكلمة السر ديالو — و<b>ما عندوش الحق يحذف</b> لا البونات ولا الموظفين.</p>
+    <div class="grid2">
+      <label>الاسم الكامل<input id="newEmpName" placeholder="مثال: ياسين بنعلي"></label>
+      <label>كلمة السر<input id="newEmpPass" type="password" placeholder="4+ حروف" dir="ltr"></label>
+    </div>
+    <div class="actions"><button id="addEmp" class="btn primary big">➕ إضافة موظف</button></div>
+    <p id="adminMsg" class="hint"></p>
+    <div id="usersList"></div>
+    <div class="actions"><button id="resetUsers" class="btn danger sm">🧹 تصفير الحسابات (أدمن واحد جديد)</button></div>
+  </div>
+  <div class="card" id="companiesCard" style="border:2px solid #06b6d4">
+    <h2>🏢 دليل الشركات (للأدمن فقط)</h2>
+    <p class="hint">الشركات اللي تزيد هنا كيبانو للعمال كاقتراحات: العامل كيكتب الحروف الأولى وكتطلع ليه اللائحة.</p>
+    <div class="row">
+      <span class="inputmic" style="flex:1"><input id="newCompany" placeholder="اسم شركة جديدة..."><button id="micNewCompany" type="button" class="btn ghost sm" title="إدخال بالصوت">🎤</button></span>
+      <button id="addCompany" class="btn primary sm">➕ زيد</button>
+    </div>
+    <div class="row">
+      <label class="btn ghost sm file-label">📥 استيراد الشركات من Excel<input type="file" id="importCompanies" accept=".xlsx,.xls" hidden></label>
+    </div>
+    <p id="companyMsg" class="hint"></p>
+    <div id="companiesList"></div>
+  </div>
+  <div class="card">
+    <h2>👥 إدارة الموظفين — شكون صوّر شنو</h2>
+    <p class="hint">كل بون كيتسجل باسم الموظف اللي صورو. كليكي على موظف باش تشوف البونات ديالو.</p>
+    <div id="empTable"></div>
+  </div>
+  <div class="card">
+    <h2>📁 دوسيات منظمة حسب اليوم</h2>
+    <p class="hint">نفس التنظيم يُنشأ تلقائيا في Google Drive:<br><code dir="ltr">Bons_Archivage / 2026 / 10-Octobre / 07 / الموظف /</code></p>
+    <div class="row"><label>السنة <select id="yearSel"></select></label><label>الشهر <select id="monthSel"></select></label></div>
+    <div id="adminMonthCard" class="filename" hidden></div>
+    <div id="daysGrid" class="folders"></div>
+  </div>
+</section>
+
+<!-- DRIVE -->
+<section id="tab-drive" class="tab">
+  <div class="card" style="border:2px solid #14b8a6">
+    <h2>✅ الطريقة 1: مباشرة بلا Cloud Console (ساهلة)</h2>
+    <ol class="steps">
+      <li>حل <b>script.google.com</b> ← مشروع جديد</li>
+      <li>انسخ والصق محتوى ملف <b>Drive-AppsScript-Code.gs</b> اللي مع التطبيق</li>
+      <li>دير <b>Deploy ← New deployment ← Web app</b> ← Execute as: Me ← Access: Anyone ← انسخ الرابط</li>
+      <li>الصق الرابط هنا لتحت 👇</li>
+    </ol>
+    <label>رابط Apps Script (Web App URL)<input id="scriptUrl" dir="ltr" placeholder="https://script.google.com/macros/s/XXXX/exec"></label>
+    <label>اسم مجلد Drive الرئيسي<input id="rootFolder" value="Bons_Archivage"></label>
+    <div class="actions">
+      <button id="driveTest" class="btn ghost">🔌 اختبار الاتصال</button>
+      <button id="driveSync" class="btn primary">🔄 مزامنة الكل إلى Drive</button>
+    </div>
+    <p id="driveMsg" class="hint"></p>
+  </div>
+  <div class="card">
+    <details><summary>⚙️ الطريقة 2: OAuth متقدمة (Cloud Console)</summary>
+    <ol class="steps">
+      <li>أنشئ مشروع في <b>Google Cloud Console</b> وفعّل <b>Drive API</b></li>
+      <li>أنشئ <b>OAuth Client ID (Web)</b> وأضف origin موقعك</li>
+      <li>الصق الـ Client ID هنا ثم سجّل الدخول</li>
+    </ol>
+    <label>Google Client ID<input id="clientId" dir="ltr" placeholder="xxxx.apps.googleusercontent.com"></label>
+    <div class="actions">
+      <button id="driveLogin" class="btn drive">🔑 تسجيل الدخول Google</button>
+    </div>
+    </details>
+    <details><summary>📖 شرح التنظيم التلقائي</summary>
+    <p>كل حفظ يولّد:<br>📁 <code dir="ltr">Bons_Archivage/2026/10-Octobre/07/الموظف/</code><br>📄 <code dir="ltr">2026-10-07_Samsung_F-123_450DH.jpg</code><br>ويُرفع بنفس الاسم + وصف فيه الشركة والرقم والمبلغ.</p>
+    </details>
+    <details><summary>🔐 الحماية / PIN</summary>
+    <div class="row">
+      <button id="myPass" class="btn primary sm">🔑 بدل كلمة السر ديالي</button>
+      <button id="changePin" class="btn ghost sm">➕ إضافة موظف</button>
+      <button id="removePin" class="btn danger sm">❌ إزالة القفل</button>
+    </div>
+    </details>
+  </div>
+</section>
+</main>
+
+<nav class="bottombar">
+  <button data-tab="add" class="active">📸<small>إضافة</small></button>
+  <button data-tab="archive">🗂️<small>الأرشيف</small></button>
+  <button data-tab="hisab">🧮<small>حساب اليوم</small></button>
+  <button data-tab="folders">📁<small>الشهور</small></button>
+  <button data-tab="drive">☁️<small>Drive</small></button>
+</nav>
+
+<div id="toast"></div>
+<div id="updBar" hidden style="position:fixed;top:0;right:0;left:0;z-index:200;background:linear-gradient(135deg,#FFD200,#F5B800);color:#7A0D16;font-weight:800;text-align:center;padding:10px;font-size:14px">🔄 كاين تحديث جديد! <button id="updGo" class="btn primary sm">حدّث دابا</button></div>
+<script src="app.js"></script>
+<script>
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').then(r=>{
+    r.onupdatefound=()=>{const w=r.installing;w.onstatechange=()=>{if(w.state==='installed'&&navigator.serviceWorker.controller){document.getElementById('updBar').hidden=false}}};
+  });
+  let reloaded=false;
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded)return;reloaded=true;window.location.reload()});
+}
+document.getElementById('updGo').onclick=()=>{if(navigator.serviceWorker.controller)navigator.serviceWorker.controller.postMessage('skip');window.location.reload()};
+</script>
+</body>
+</html>
