@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v59';
+const APP_VER='v60';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -47,7 +47,7 @@ async function shaLegacy(s){
   }catch(e){}
   return null;
 }
-function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';const us=getUsers();if(!us.length){if(forceSetup||!backendUrl())return 'setup';return 'login'}return localStorage.getItem('bon_nolock')?'open':'login'}
+function lockMode(){if(sessionStorage.getItem('bon_unlocked')==='1')return 'open';const us=getUsers();if(!us.length){return forceSetup?'setup':'login'}return localStorage.getItem('bon_nolock')?'open':'login'}
 let forceSetup=false;
 // ===== قاعدة المستخدمين المركزية (نفس Apps Script) — دخول من أي هاتف/PC =====
 function backendUrl(){try{const v=($('scriptUrl')&&$('scriptUrl').value||'').trim();if(v)return v}catch(e){}try{return localStorage.getItem('scriptUrl')||''}catch(e){return ''}}
@@ -117,9 +117,11 @@ function refreshLock(){
   else if(m==='login'){
     const fresh=!getUsers().length;
     $('lockTitle').textContent='🔒 تسجيل الدخول';
-    $('lockSub').textContent=fresh?'هاد الجهاز جديد — دخل بحسابك المسجل في السيرفر':'دخل الاسم الكامل وكلمة السر';
+    $('lockSub').textContent=fresh?'جهاز جديد؟ الصق رابط السيرفر تحت ودخل بحسابك المسجل':'دخل الاسم الكامل وكلمة السر';
     $('lockUser').hidden=false;$('lockPin2').hidden=true;$('lockGo').textContent='🔓 دخول';$('lockSkip').hidden=true;$('lockForgot').hidden=!fresh;
-    $('lockNewAdmin').hidden=!(fresh&&backendUrl());
+    $('lockNewAdmin').hidden=!fresh;
+    const ls=$('lockSrv');
+    if(ls){ls.hidden=!fresh;if(fresh&&!ls.value){try{ls.value=localStorage.getItem('scriptUrl')||''}catch(e){}}}
   }
   const c=getUser();if(c) $('logoutBtn').title='خروج '+c.name;
 }
@@ -166,6 +168,7 @@ $('lockGo').onclick=async()=>{
 };
 $('lockSkip').onclick=()=>{localStorage.setItem('bon_nolock','1');unlock()};
 $('lockNewAdmin').onclick=()=>{forceSetup=true;$('lockMsg').textContent='';refreshLock()};
+$('lockSrv').addEventListener('input',()=>{try{localStorage.setItem('scriptUrl',$('lockSrv').value.trim())}catch(e){}});
 $('lockForgot').onclick=()=>{
   if(!confirm('تصفر الحسابات وتنشئ أدمن جديد؟\nالبونات المحفوظة غتبقى.')) return;
   apiU('wipe',{by:(getUser()||{}).name,byHash:(getUser()||{}).hash});
