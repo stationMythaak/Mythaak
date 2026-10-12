@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v64';
+const APP_VER='v65';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -71,12 +71,13 @@ function needRelogin(){
 // مزامنة دليل الشركات مع السيرفر (الكل يسحب، الأدمن يدفع)
 async function pullCompanies(silent){
   const r=await apiU('coPull',{});
-  if(!r||!r.ok||!Array.isArray(r.companies)){if(!silent)toast('❌ تعذر مزامنة الشركات');return false}
+  if(!r||!r.ok||!Array.isArray(r.companies)){if(!silent)toast('❌ تعذر مزامنة الشركات — حدّث كود Apps Script');return false}
   const cos=getCompanies(),low=new Set(cos.map(c=>c.toLowerCase()));let n=0;
   r.companies.forEach(c=>{c=String(c||'').trim();if(c.length>1&&!low.has(c.toLowerCase())){cos.push(c);low.add(c.toLowerCase());n++}});
   if(n)saveCompanies(cos);
   renderCompanies();render();
-  if(!silent)toast(n?`🔄 تزامنو ${n} شركات جداد من السيرفر`:'✅ الشركات محدثة already');
+  if(n)toast(`📥 تستوردو ${n} شركات من السيرفر`);
+  else if(!silent)toast('✅ الشركات محدثة already');
   return true;
 }
 async function pushCompanies(){
@@ -315,7 +316,7 @@ if($('saveCoDrive'))$('saveCoDrive').onclick=async()=>{
   const r=await apiU('coPush',{companies:getCompanies(),by:me.name,byHash:me.hash});
   if(r&&r.ok){$('companyMsg').textContent=`☁️ تحفظ في Drive (${r.n} شركة) — أي جهاز جديد غيستوردو تلقائيا عند الدخول`;toast('☁️ الدليل محفوظ في Drive')}
   else if(r&&r.error==='forbidden'){needRelogin()}
-  else{$('companyMsg').textContent='❌ تعذر — تحقق من رابط السيرفر';toast('❌ تعذر الحفظ')}
+  else{$('companyMsg').textContent='❌ تعذر — حدّث كود Apps Script (New version) وتأكد من الرابط';toast('❌ تعذر الحفظ')}
 };
 // security: every load (incl. duplicated tabs) starts locked — login required
 sessionStorage.removeItem('bon_unlocked');sessionStorage.removeItem(CUR_KEY);
@@ -1412,8 +1413,15 @@ $('driveTest').onclick=async()=>{
   localStorage.setItem('scriptUrl',url);
   $('driveMsg').textContent='⏳ كنختبر...';
   try{const r=await fetch(url);const j=await r.json();
-    $('driveMsg').textContent=j.ok?'✅ خدام! دابا أي حفظ غيطلع مباشرة لـ Drive':'⚠️ الرد غير متوقع';
-    if(j.ok){$('driveStatus').textContent='☁️ متصل بـ Drive مباشرة ✅';toast('☁️ متصل')}
+    if(!j.ok){$('driveMsg').textContent='⚠️ الرد غير متوقع';return}
+    // فحص نسخة كود السيرفر: واش فيه المستخدمين + الشركات؟
+    let caps='';
+    try{
+      const t=await (await fetch(url,{method:'POST',body:JSON.stringify({action:'coPull'})})).json();
+      caps=(t&&t.ok&&Array.isArray(t.companies))?` ✅ سيرفر محدث (شركات: ${t.companies.length})`:' ⚠️ حدّث كود Apps Script (New version) — الشركات ما غتزامنوش';
+    }catch(e){caps=' ⚠️ تعذر فحص النسخة'}
+    $('driveMsg').textContent='✅ خدام!'+caps;
+    $('driveStatus').textContent='☁️ متصل بـ Drive مباشرة ✅';toast('☁️ متصل');
   }catch(e){$('driveMsg').textContent='❌ فشل: تأكد أن Deploy → Access: Anyone'}
 };
 
