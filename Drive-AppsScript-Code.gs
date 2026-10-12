@@ -90,6 +90,20 @@ function userApi_(d){
     if(a==='del'){var id=findU_(all,d.name);if(id<0)return jOut({ok:false});if(all[id].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all.splice(id,1);writeUsers_(all);return jOut({ok:true})}
     if(a==='setRole'){var ir=findU_(all,d.name);if(ir<0)return jOut({ok:false});if(d.role!=='admin'&&all[ir].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all[ir].role=d.role;writeUsers_(all);return jOut({ok:true})}
     if(a==='wipe'){writeUsers_([]);return jOut({ok:true})}
+    if(a==='coPull'){
+      try{var cf=DriveApp.getFilesByName('bon-companies-db.json');var cl=cf.hasNext()?JSON.parse(cf.next().getBlob().getDataAsString()):[];return jOut({ok:true,companies:Array.isArray(cl)?cl:[]})}catch(e){return jOut({ok:true,companies:[]})}
+    }
+    if(a==='coPush'){
+      var au=readUsers_(),iu=findU_(au,d.by);
+      if(!(iu>=0&&String(au[iu].hash)===String(d.byHash)&&au[iu].role==='admin'))return jOut({ok:false,error:'forbidden'});
+      if(!Array.isArray(d.companies))return jOut({ok:false});
+      var clean=[],seen={};
+      for(var ci=0;ci<d.companies.length&&clean.length<500;ci++){var cn=String(d.companies[ci]||'').trim();if(cn.length>1&&!seen[cn.toLowerCase()]){seen[cn.toLowerCase()]=1;clean.push(cn)}}
+      var cff=DriveApp.getFilesByName('bon-companies-db.json');
+      var cf2=cff.hasNext()?cff.next():DriveApp.createFile('bon-companies-db.json','[]','application/json');
+      cf2.setContent(JSON.stringify(clean));
+      return jOut({ok:true,n:clean.length});
+    }
     return jOut({ok:false,error:'unknown'});
   }finally{try{lock.releaseLock()}catch(e){}}
 }

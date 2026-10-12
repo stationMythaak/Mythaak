@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v62';
+const APP_VER='v63';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -67,6 +67,21 @@ function upsertLocalUser(name,hash,role){
 function needRelogin(){
   toast('🔄 تبدلات الصلاحيات في السيرفر — سجل الدخول مجددا');
   lock();
+}
+// مزامنة دليل الشركات مع السيرفر (الكل يسحب، الأدمن يدفع)
+async function pullCompanies(silent){
+  const r=await apiU('coPull',{});
+  if(!r||!r.ok||!Array.isArray(r.companies)){if(!silent)toast('❌ تعذر مزامنة الشركات');return false}
+  const cos=getCompanies(),low=new Set(cos.map(c=>c.toLowerCase()));let n=0;
+  r.companies.forEach(c=>{c=String(c||'').trim();if(c.length>1&&!low.has(c.toLowerCase())){cos.push(c);low.add(c.toLowerCase());n++}});
+  if(n)saveCompanies(cos);
+  renderCompanies();render();
+  if(!silent)toast(n?`🔄 تزامنو ${n} شركات جداد من السيرفر`:'✅ الشركات محدثة already');
+  return true;
+}
+async function pushCompanies(){
+  const me=getUser();if(!me||me.role!=='admin')return;
+  apiU('coPush',{companies:getCompanies(),by:me.name,byHash:me.hash});
 }
 // سحب لائحة المستخدمين من السيرفر للمرآة المحلية (الأدمن)
 async function pullUsers(silent){
@@ -161,6 +176,7 @@ $('lockGo').onclick=async()=>{
       if(r&&r.ok){
         upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
         sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
+        pullCompanies(true);
         if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))});pullUsers(true)}
         return;
       }
@@ -292,6 +308,7 @@ $('resetUsers').onclick=()=>{
 $('lockPin').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 $('lockUser').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 if($('syncUsers'))$('syncUsers').onclick=()=>pullUsers(false);
+if($('syncCompanies'))$('syncCompanies').onclick=()=>pullCompanies(false);
 // security: every load (incl. duplicated tabs) starts locked — login required
 sessionStorage.removeItem('bon_unlocked');sessionStorage.removeItem(CUR_KEY);
 refreshLock();showUser();
@@ -748,7 +765,7 @@ function renderCompanies(){
     if(!confirm('تحذف الشركة '+nm+'؟')) return;
     saveCompanies(getCompanies().filter(x=>x!==nm));
     try{const v=getVoices();delete v[nm];saveVoices(v)}catch(e){}
-    renderCompanies();toast('🗑️ تحذفات '+nm);
+    renderCompanies();pushCompanies();toast('🗑️ تحذفات '+nm);
   }});
   box.querySelectorAll('[data-cedit]').forEach(b=>{b.onclick=()=>{
     const idx=+b.dataset.cedit, cos=getCompanies(), old=cos[idx];if(!old) return;
@@ -765,7 +782,7 @@ function renderCompanies(){
       try{const vv=getVoices();if(vv[old]&&old!==v){vv[v]=vv[old];delete vv[old];saveVoices(vv)}}catch(e){}
       let n=0;receipts.forEach(r=>{if((r.company||'')===old){r.company=v;n++}});
       if(n)save();
-      renderCompanies();render();toast(n?`✅ تعدلات (${n} بون تحدث)`:'✅ تعدلات');
+      renderCompanies();pushCompanies();render();toast(n?`✅ تعدلات (${n} بون تحدث)`:'✅ تعدلات');
     };
     ops.querySelector('[data-ccancel]').onclick=renderCompanies;
   }});
@@ -780,7 +797,7 @@ $('addCompany').onclick=()=>{
   const cos=getCompanies();
   if(cos.some(c=>c.toLowerCase()===v.toLowerCase())){$('companyMsg').textContent='⚠️ هادي مسجلة already';return}
   cos.push(v);saveCompanies(cos);$('newCompany').value='';$('companyMsg').textContent='✅ تزادت '+v;
-  renderCompanies();toast('✅ تزادت الشركة');
+  renderCompanies();pushCompanies();toast('✅ تزادت الشركة');
 };
 $('newCompany').addEventListener('keydown',e=>{if(e.key==='Enter')$('addCompany').click()});
 if($('micNewCompany'))$('micNewCompany').onclick=e=>{e.preventDefault();listenTo($('micNewCompany'),$('newCompany'))};
@@ -808,7 +825,7 @@ $('impCompanies').onchange=e=>{
         Object.keys(d.voices).forEach(k=>{if(!vv[k]&&typeof d.voices[k]==='string'&&d.voices[k].indexOf('data:audio')===0){vv[k]=d.voices[k];nv++}});
         try{saveVoices(vv)}catch(err){toast('⚠️ بعض الأصوات ما تحفظاتش (التخزين عامر)')}
       }
-      renderCompanies();render();toast(`📥 تستوردو ${n} شركات + ${nv} أصوات`);
+      renderCompanies();pushCompanies();render();toast(`📥 تستوردو ${n} شركات + ${nv} أصوات`);
     }catch(err){toast('❌ ملف غير صالح')}
   };
   rd.readAsText(f);e.target.value='';
@@ -831,7 +848,7 @@ $('importCompanies').onchange=e=>{
       const cos=getCompanies();const low=new Set(cos.map(c=>c.toLowerCase()));let n=0;
       names.forEach(v=>{if(!low.has(v.toLowerCase())){cos.push(v);low.add(v.toLowerCase());n++}});
       saveCompanies(cos);$('companyMsg').textContent=`✅ تستوردو ${n} شركات من Excel`;
-      renderCompanies();toast(`📥 تستوردو ${n} شركات`);
+      renderCompanies();pushCompanies();toast(`📥 تستوردو ${n} شركات`);
     }catch(err){toast('❌ ملف Excel غير صالح')}
   };
   rd.readAsArrayBuffer(f);e.target.value='';
