@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v60';
+const APP_VER='v61';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -770,6 +770,35 @@ $('addCompany').onclick=()=>{
 };
 $('newCompany').addEventListener('keydown',e=>{if(e.key==='Enter')$('addCompany').click()});
 if($('micNewCompany'))$('micNewCompany').onclick=e=>{e.preventDefault();listenTo($('micNewCompany'),$('newCompany'))};
+// تصدير/استيراد الدليل (شركات + أصوات) للنقل لجهاز آخر
+$('expCompanies').onclick=()=>{
+  if(!isAdmin()){toast('⛔ للأدمن فقط');return}
+  const data={app:'BonArchive-companies',v:1,at:new Date().toISOString(),companies:getCompanies(),voices:getVoices()};
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));a.download='companies-backup.json';a.click();
+  toast('📤 تحمل الدليل — صيفطو للجهاز الآخر');
+};
+$('impCompanies').onchange=e=>{
+  if(!isAdmin()){toast('⛔ للأدمن فقط');e.target.value='';return}
+  const f=e.target.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const d=JSON.parse(rd.result);
+      if(!d||!Array.isArray(d.companies))throw new Error('bad');
+      const cos=getCompanies(),low=new Set(cos.map(c=>c.toLowerCase()));let n=0;
+      d.companies.forEach(c=>{c=String(c||'').trim();if(c.length>1&&!low.has(c.toLowerCase())){cos.push(c);low.add(c.toLowerCase());n++}});
+      saveCompanies(cos);
+      let nv=0;
+      if(d.voices&&typeof d.voices==='object'){
+        const vv=getVoices();
+        Object.keys(d.voices).forEach(k=>{if(!vv[k]&&typeof d.voices[k]==='string'&&d.voices[k].indexOf('data:audio')===0){vv[k]=d.voices[k];nv++}});
+        try{saveVoices(vv)}catch(err){toast('⚠️ بعض الأصوات ما تحفظاتش (التخزين عامر)')}
+      }
+      renderCompanies();render();toast(`📥 تستوردو ${n} شركات + ${nv} أصوات`);
+    }catch(err){toast('❌ ملف غير صالح')}
+  };
+  rd.readAsText(f);e.target.value='';
+};
 $('importCompanies').onchange=e=>{
   if(!isAdmin()){toast('⛔ للأدمن فقط');e.target.value='';return}
   const f=e.target.files[0];if(!f) return;
