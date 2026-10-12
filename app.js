@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v61';
+const APP_VER='v62';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -67,6 +67,17 @@ function upsertLocalUser(name,hash,role){
 function needRelogin(){
   toast('🔄 تبدلات الصلاحيات في السيرفر — سجل الدخول مجددا');
   lock();
+}
+// سحب لائحة المستخدمين من السيرفر للمرآة المحلية (الأدمن)
+async function pullUsers(silent){
+  const me=getUser();if(!me||me.role!=='admin')return false;
+  const r=await apiU('list',{by:me.name,byHash:me.hash});
+  if(!r||!r.ok){if(!silent)toast('❌ تعذر المزامنة');return false}
+  const local=getUsers(),byName={};local.forEach(u=>byName[u.name]=u);
+  saveUsers(r.users.map(x=>({name:x.name,role:x.role,hash:(byName[x.name]||{}).hash||null})));
+  renderUsers();render();
+  if(!silent)toast(`🔄 تزامنو ${r.users.length} حسابات من السيرفر`);
+  return true;
 }
 function unlock(){sessionStorage.setItem('bon_unlocked','1');refreshLock();showUser();claimLegacyStation();render();loadStation()}
 // ترحيل مرة واحدة: سجلات قديمة بلا سمية => لصاحب الجهاز (أول عامل يدخل)، إلا كان بدا عهد المسماة كانخليوها للأدمن
@@ -150,7 +161,7 @@ $('lockGo').onclick=async()=>{
       if(r&&r.ok){
         upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
         sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
-        if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))})}
+        if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))});pullUsers(true)}
         return;
       }
       if(r===null)toast('📱 بلا اتصال — دخول محلي');
@@ -185,8 +196,10 @@ $('myPass').onclick=async()=>{
   if(!me){toast('⚠️ سجل الدخول أولا');return}
   const cur=prompt('كلمة السر الحالية لـ '+me.name+' :');
   if(cur===null) return;
-  let ok=(await sha(me.name+'::'+cur))===me.hash;
+  const oldH=await sha(me.name+'::'+cur);
+  let ok=me.hash&&oldH===me.hash;
   if(!ok){const lg=await shaLegacy(me.name+'::'+cur);if(lg&&lg===me.hash)ok=true}
+  if(!ok&&backendUrl()){const chk=await apiU('login',{name:me.name,hash:oldH});if(chk&&chk.ok)ok=true}
   if(!ok){toast('❌ الحالية غلط');return}
   const p1=prompt('كلمة السر الجديدة (4 حروف على الأقل) :');
   if(p1===null) return;
@@ -197,7 +210,7 @@ $('myPass').onclick=async()=>{
   const users=getUsers();const u=users.find(x=>x.name===me.name);
   if(!u){toast('❌ الحساب ما لقيناهش');return}
   const nh=await sha(me.name+'::'+p1);
-  const back=await apiU('setPass',{name:me.name,oldHash:me.hash,newHash:nh});
+  const back=await apiU('setPass',{name:me.name,oldHash:oldH,newHash:nh});
   if(backErr(back))return;
   u.hash=nh;saveUsers(users);toast('✅ تبدلات كلمة السر ديالك'+(back&&back.ok?' (☁️)':''));
 };
@@ -278,6 +291,7 @@ $('resetUsers').onclick=()=>{
 };
 $('lockPin').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 $('lockUser').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
+if($('syncUsers'))$('syncUsers').onclick=()=>pullUsers(false);
 // security: every load (incl. duplicated tabs) starts locked — login required
 sessionStorage.removeItem('bon_unlocked');sessionStorage.removeItem(CUR_KEY);
 refreshLock();showUser();
