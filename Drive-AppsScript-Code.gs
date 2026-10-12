@@ -13,7 +13,7 @@ function getOrCreate_(name, parent) {
 }
 
 function doGet() {
-  return ContentService.createTextOutput(JSON.stringify({ok:true, msg:'BonArchive ready'}))
+  return ContentService.createTextOutput(JSON.stringify({ok:true, msg:'BonArchive ready', srv:'v3-users-companies'}))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -84,7 +84,7 @@ function userApi_(d){
     }
     var all=readUsers_(),ib=findU_(all,d.by);
     var okAdm=ib>=0&&String(all[ib].hash)===String(d.byHash)&&all[ib].role==='admin';
-    if(!okAdm)return jOut({ok:false,error:'forbidden'});
+    if(!okAdm&&a!=='coPull')return jOut({ok:false,error:'forbidden'});
     if(a==='list'){var li=[];for(var i=0;i<all.length;i++)li.push({name:all[i].name,role:all[i].role});return jOut({ok:true,users:li})}
     if(a==='add'){if(findU_(all,d.name)>=0)return jOut({ok:false,error:'exists'});all.push({name:d.name,hash:d.hash,role:d.role||'employee'});writeUsers_(all);return jOut({ok:true})}
     if(a==='del'){var id=findU_(all,d.name);if(id<0)return jOut({ok:false});if(all[id].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all.splice(id,1);writeUsers_(all);return jOut({ok:true})}

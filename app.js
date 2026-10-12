@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v65';
+const APP_VER='v67';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -1418,9 +1418,11 @@ $('driveTest').onclick=async()=>{
     let caps='';
     try{
       const t=await (await fetch(url,{method:'POST',body:JSON.stringify({action:'coPull'})})).json();
-      caps=(t&&t.ok&&Array.isArray(t.companies))?` ✅ سيرفر محدث (شركات: ${t.companies.length})`:' ⚠️ حدّث كود Apps Script (New version) — الشركات ما غتزامنوش';
+      if(t&&t.ok&&Array.isArray(t.companies)) caps=` ✅ سيرفر محدث (شركات: ${t.companies.length})`;
+      else if(t&&t.msg) caps=' ⚠️ السيرفر رد بـ GET بدل POST (مشكل تحويل) — صورو ليا هاد الرسالة';
+      else caps=` ⚠️ خطأ السيرفر: ${(t&&(t.error||t.message))||'؟'} — صورو ليا`;
     }catch(e){caps=' ⚠️ تعذر فحص النسخة'}
-    $('driveMsg').textContent='✅ خدام!'+caps;
+    $('driveMsg').textContent=`✅ خدام! (سيرفر: ${j.srv||'قديم — حدّث الكود'})${caps}`;
     $('driveStatus').textContent='☁️ متصل بـ Drive مباشرة ✅';toast('☁️ متصل');
   }catch(e){$('driveMsg').textContent='❌ فشل: تأكد أن Deploy → Access: Anyone'}
 };
