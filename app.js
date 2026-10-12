@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v63';
+const APP_VER='v64';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -309,6 +309,14 @@ $('lockPin').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click
 $('lockUser').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 if($('syncUsers'))$('syncUsers').onclick=()=>pullUsers(false);
 if($('syncCompanies'))$('syncCompanies').onclick=()=>pullCompanies(false);
+if($('saveCoDrive'))$('saveCoDrive').onclick=async()=>{
+  const me=getUser();if(!me||me.role!=='admin'){toast('⛔ للأدمن فقط');return}
+  $('companyMsg').textContent='☁️ كنحفظ في Drive...';
+  const r=await apiU('coPush',{companies:getCompanies(),by:me.name,byHash:me.hash});
+  if(r&&r.ok){$('companyMsg').textContent=`☁️ تحفظ في Drive (${r.n} شركة) — أي جهاز جديد غيستوردو تلقائيا عند الدخول`;toast('☁️ الدليل محفوظ في Drive')}
+  else if(r&&r.error==='forbidden'){needRelogin()}
+  else{$('companyMsg').textContent='❌ تعذر — تحقق من رابط السيرفر';toast('❌ تعذر الحفظ')}
+};
 // security: every load (incl. duplicated tabs) starts locked — login required
 sessionStorage.removeItem('bon_unlocked');sessionStorage.removeItem(CUR_KEY);
 refreshLock();showUser();
