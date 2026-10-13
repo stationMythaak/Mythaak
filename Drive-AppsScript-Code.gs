@@ -104,6 +104,19 @@ function userApi_(d){
       cf2.setContent(JSON.stringify(clean));
       return jOut({ok:true,n:clean.length});
     }
+    if(a==='prPull'){
+      try{var pf=DriveApp.getFilesByName('bon-prices-db.json');var pl=pf.hasNext()?JSON.parse(pf.next().getBlob().getDataAsString()):[];return jOut({ok:true,prices:Array.isArray(pl)?pl:[]})}catch(e){return jOut({ok:true,prices:[]})}
+    }
+    if(a==='prPush'){
+      var ap=readUsers_(),ip=findU_(ap,d.by);
+      if(!(ip>=0&&String(ap[ip].hash)===String(d.byHash)&&ap[ip].role==='admin'))return jOut({ok:false,error:'forbidden'});
+      if(!Array.isArray(d.prices))return jOut({ok:false});
+      var nums=[];for(var pi=0;pi<d.prices.length&&pi<20;pi++){var pv=parseFloat(d.prices[pi]);nums.push(isNaN(pv)?0:pv)}
+      var pff=DriveApp.getFilesByName('bon-prices-db.json');
+      var pf2=pff.hasNext()?pff.next():DriveApp.createFile('bon-prices-db.json','[]','application/json');
+      pf2.setContent(JSON.stringify(nums));
+      return jOut({ok:true});
+    }
     return jOut({ok:false,error:'unknown'});
   }finally{try{lock.releaseLock()}catch(e){}}
 }

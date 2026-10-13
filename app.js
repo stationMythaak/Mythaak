@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v67';
+const APP_VER='v69';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -67,6 +67,23 @@ function upsertLocalUser(name,hash,role){
 function needRelogin(){
   toast('🔄 تبدلات الصلاحيات في السيرفر — سجل الدخول مجددا');
   lock();
+}
+// مزامنة الأثمنة: الأدمن يدفع، الكل يسحب تلقائيا
+async function pullPrices(silent){
+  const r=await apiU('prPull',{});
+  if(!r||!r.ok||!Array.isArray(r.prices)){if(!silent)toast('❌ تعذر جلب الثمن — تحقق من الرابط وتحديث السكريبت');return false}
+  const np=r.prices.slice(0,ST_N).map(v=>parseFloat(v)||0);
+  while(np.length<ST_N)np.push(0);
+  if(JSON.stringify(np)===JSON.stringify(getPrices()))return true;
+  savePrices(np);
+  if(!isAdmin()){for(let i=0;i<ST_N;i++){const el=$('st-p-'+i);if(el)el.value=np[i]||''}calcStation(false)}
+  if(!silent)toast('💵 تحدثات الأثمنة من السيرفر');
+  else toast('💵 ثمن جديد من الأدمن');
+  return true;
+}
+async function pushPrices(){
+  const me=getUser();if(!me||me.role!=='admin')return;
+  apiU('prPush',{prices:getPrices(),by:me.name,byHash:me.hash});
 }
 // مزامنة دليل الشركات مع السيرفر (الكل يسحب، الأدمن يدفع)
 async function pullCompanies(silent){
@@ -177,7 +194,7 @@ $('lockGo').onclick=async()=>{
       if(r&&r.ok){
         upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
         sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
-        pullCompanies(true);
+        pullCompanies(true);pullPrices(true);
         if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))});pullUsers(true)}
         return;
       }
@@ -338,7 +355,10 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll(`[data-tab="${b.dataset.tab}"]`).forEach(x=>x.classList.add('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   $('tab-'+b.dataset.tab).classList.add('active');
+  if(b.dataset.tab==='hisab')pullPrices(true); // تحديث الأثمنة تلقائيا عند فتح الحساب
 });
+// تحديث دوري للأثمنة كل دقيقتين (بلا ما يمسح الصفحة)
+setInterval(()=>{try{if(sessionStorage.getItem('bon_unlocked')==='1'&&backendUrl())pullPrices(true)}catch(e){}},120000);
 
 // Date default
 $('fDate').value=new Date().toISOString().slice(0,10);
@@ -1015,7 +1035,7 @@ function calcStation(save=true){
   $('st-total').textContent=(Math.round(tot*100)/100)+' DH';
   if(save&&!stReadOnly()){
     try{localStorage.setItem(stKey($('stDate').value,stEmp()),JSON.stringify(d))}catch(e){}
-    if(isAdmin()) savePrices(d.p); // ثمن الأدمن هو المرجع الثابت للكل
+    if(isAdmin()){savePrices(d.p);pushPrices()} // ثمن الأدمن هو المرجع الثابت للكل + دفع للسيرفر
   }
   if(typeof renderHisab==='function')renderHisab(); // المجموع الكلي يتبدل مباشرة مع العدادات
 }
@@ -1126,6 +1146,7 @@ document.querySelector('.stable').addEventListener('focusin',e=>{
   else stNavTarget=null; // ضغطة يدوية في بلاصة أخرى => نقبلوها
 });
 $('stDate').addEventListener('change',()=>syncDay('stDate'));
+if($('updPrices'))$('updPrices').onclick=()=>{pullPrices(false)};
 $('stClear').onclick=()=>{if(stReadOnly()){toast('⛔ عرض فقط');return}if(!confirm('تمسح حساب هاد النهار؟'))return;localStorage.removeItem(stKey($('stDate').value,stEmp()));localStorage.removeItem(ST_KEY+$('stDate').value);for(let i=0;i<ST_N;i++){$('st-a-'+i).value='';$('st-b-'+i).value=''}calcStation();renderStEmps()};
 $('stExcel').onclick=()=>{
   if(typeof XLSX==='undefined'){toast('❌ مكتبة Excel ما تحملاتش');return}
