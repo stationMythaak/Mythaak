@@ -82,9 +82,44 @@ function userApi_(d){
       if(!selfOk&&!admOk)return jOut({ok:false,error:'forbidden'});
       u3[i3].hash=d.newHash;writeUsers_(u3);return jOut({ok:true});
     }
+    if(a==='invList'){
+      // لائحة البونات من Drive: الأدمن الكل، العامل ديالو فقط (الصور تبقى في Drive)
+      var au4=readUsers_(),iu4=findU_(au4,d.by);
+      if(!(iu4>=0&&String(au4[iu4].hash)===String(d.byHash)))return jOut({ok:false,error:'forbidden'});
+      var isAdm=au4[iu4].role==='admin';
+      var out=[],count=0,MAX=2000;
+      var collect_=function(fo,emp){
+        if(!isAdm&&emp!==d.by&&emp!=='—')return;
+        var fits=fo.getFiles();
+        while(fits.hasNext()&&count<MAX){
+          var f=fits.next();
+          out.push({id:f.getId(),name:f.getName(),desc:f.getDescription()||'',emp:emp,url:'https://drive.google.com/file/d/'+f.getId()+'/view',size:f.getSize(),ct:f.getDateCreated().toISOString()});
+          count++;
+        }
+      };
+      try{
+        var rits=DriveApp.getFoldersByName(d.root||'Bons_Archivage');
+        if(rits.hasNext()){
+          var yits=rits.next().getFolders();
+          while(yits.hasNext()&&count<MAX){
+            var mits=yits.next().getFolders();
+            while(mits.hasNext()&&count<MAX){
+              var dits=mits.next().getFolders();
+              while(dits.hasNext()&&count<MAX){
+                var df=dits.next(),eits=df.getFolders(),empDirs=[];
+                while(eits.hasNext())empDirs.push(eits.next());
+                if(!empDirs.length)collect_(df,'—');
+                else for(var e=0;e<empDirs.length&&count<MAX;e++)collect_(empDirs[e],empDirs[e].getName());
+              }
+            }
+          }
+        }
+      }catch(e){return jOut({ok:false,error:String(e)})}
+      return jOut({ok:true,files:out});
+    }
     var all=readUsers_(),ib=findU_(all,d.by);
     var okAdm=ib>=0&&String(all[ib].hash)===String(d.byHash)&&all[ib].role==='admin';
-    if(!okAdm&&a!=='coPull')return jOut({ok:false,error:'forbidden'});
+    if(!okAdm&&a!=='coPull'&&a!=='prPull')return jOut({ok:false,error:'forbidden'});
     if(a==='list'){var li=[];for(var i=0;i<all.length;i++)li.push({name:all[i].name,role:all[i].role});return jOut({ok:true,users:li})}
     if(a==='add'){if(findU_(all,d.name)>=0)return jOut({ok:false,error:'exists'});all.push({name:d.name,hash:d.hash,role:d.role||'employee'});writeUsers_(all);return jOut({ok:true})}
     if(a==='del'){var id=findU_(all,d.name);if(id<0)return jOut({ok:false});if(all[id].role==='admin'&&countAdm_(all)<=1)return jOut({ok:false,error:'last-admin'});all.splice(id,1);writeUsers_(all);return jOut({ok:true})}

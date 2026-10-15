@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v69';
+const APP_VER='v70';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -194,7 +194,7 @@ $('lockGo').onclick=async()=>{
       if(r&&r.ok){
         upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
         sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
-        pullCompanies(true);pullPrices(true);
+        pullCompanies(true);pullPrices(true);pullDriveArchive(true);
         if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))});pullUsers(true)}
         return;
       }
@@ -1203,6 +1203,42 @@ function renderCoSugg(){
 }
 if($('fCompany')){$('fCompany').addEventListener('input',renderCoSugg);$('fCompany').addEventListener('focus',renderCoSugg)}
 document.addEventListener('click',e=>{const b=$('coSugg');if(b&&!b.hidden&&!e.target.closest('#coSugg')&&e.target!==$('fCompany'))b.hidden=true});
+// ===== جلب أرشيف البونات من Drive (الميتا للكل، الصور تبقى في Drive) =====
+function parseDriveFile(f){
+  const parts=(f.desc||'').split('|').map(s=>s.trim());
+  const fn=f.name||'';
+  const fm=fn.match(/^(\d{4}-\d{2}-\d{2})_(.*)_([^_]+)_([\d.]+)DH\.jpe?g$/i);
+  let company='',number='',date='',amount=0,emp=(f.emp||'—'),credit=null;
+  if(fm){date=fm[1];company=fm[2].replace(/_/g,' ');number=fm[3];amount=parseFloat(fm[4])||0}
+  if(parts.length>=5){
+    emp=(parts[0].replace(/^👤\s*/,'')||emp);
+    let i=1;
+    if(/كريدي/.test(parts[1])){credit={unpaid:parts[1].indexOf('غير مخلص')>=0,paidBy:null,paidAt:null};i=2}
+    company=parts[i]||company;number=parts[i+1]||number;date=String(parts[i+2]||date).slice(0,10);amount=parseFloat(parts[i+3])||amount;
+  }
+  if(!date||!company||!/^\d{4}-\d{2}-\d{2}$/.test(date))return null;
+  return {company,number,date,amount,type:'بون Bon',pay:'',credit,note:'',fileName:fn,month:date.slice(0,7),takenBy:emp,del:null};
+}
+async function pullDriveArchive(silent){
+  const me=getUser();if(!me){if(!silent)toast('⚠️ سجل الدخول أولا');return false}
+  if(!silent)toast('☁️ كنجيب الأرشيف من Drive...');
+  const r=await apiU('invList',{by:me.name,byHash:me.hash,root:(($('rootFolder')||{}).value||'').trim()||'Bons_Archivage'});
+  if(!r||!r.ok){if(!silent)toast('❌ تعذر الجلب'+(r&&r.error==='forbidden'?' — سجل الدخول مجددا':''));return false}
+  const have=new Set(receipts.map(x=>x.driveId).filter(Boolean));
+  let n=0;
+  (r.files||[]).forEach(f=>{
+    if(f.id&&have.has(f.id))return;
+    const m=parseDriveFile(f);if(!m)return;
+    const same=receipts.find(x=>!x.driveId&&(x.company||'')===m.company&&(x.number||'')===m.number&&(x.date||'')===m.date&&(+x.amount||0)===+m.amount);
+    if(same){same.driveId=f.id;same.driveUrl=f.url;n++;return}
+    receipts.unshift({id:Date.now()+Math.random()+n,driveId:f.id,driveUrl:f.url,img:'',...m,created:f.ct||new Date().toISOString()});
+    if(f.id)have.add(f.id);n++;
+  });
+  if(n){try{save()}catch(e){toast('⚠️ تجلبو ولكن التخزين عامر — بعض الصور ما تحفظاتش محليا')}}
+  render();
+  toast(n?`☁️ تجلبو ${n} بون من Drive`:(silent?'':'✅ الأرشيف محدث already'));
+  return true;
+}
 // ===== JPG/Image -> PDF (jsPDF) =====
 function receiptToPdf(img, meta){
   if(typeof window.jspdf==='undefined'){toast('❌ مكتبة PDF ما تحملاتش — تحقق من الإنترنت');return}
@@ -1337,6 +1373,7 @@ function renderCreditBar(){
   $('creditFilterBtn').onclick=()=>{outsideOnly=!outsideOnly;render()};
 }
 $('search').oninput=render;
+if($('pullDrive'))$('pullDrive').onclick=()=>pullDriveArchive(false);
 $('filterMonth').onchange=()=>{currentMonthFilter=null;currentDayFilter=null;render()};
 $('filterEmp').onchange=render;
 $('clearFilter').onclick=()=>{$('search').value='';$('filterMonth').value='';$('filterEmp').value='';currentMonthFilter=null;currentDayFilter=null;outsideOnly=false;render()};
