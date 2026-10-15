@@ -188,8 +188,14 @@ function userApi_(d){
         return jOut({ok:true,db:mine});
       }
     }
-    if(a==='imgsGet'){
-      // صور البونات عبر السيرفر (بحساب المالك) — بلا ما يحتاج المشاهد Gmail
+    if(a==='fileDel'){
+      // مسح ملف من Drive (للأدمن فقط) — الملفات اللي رفعها السكريبت مملوكة لحساب المالك
+      var auF=readUsers_(),iuF=findU_(auF,d.by);
+      if(!(iuF>=0&&String(auF[iuF].hash)===String(d.byHash)&&auF[iuF].role==='admin'))return jOut({ok:false,error:'forbidden'});
+      try{DriveApp.getFileById(String(d.id)).setTrashed(true);return jOut({ok:true})}
+      catch(e){return jOut({ok:false,error:String(e)})}
+    }
+    if(a==='imgsGet'){      // صور البونات عبر السيرفر (بحساب المالك) — بلا ما يحتاج المشاهد Gmail
       var auI=readUsers_(),iuI=findU_(auI,d.by);
       if(!(iuI>=0&&String(auI[iuI].hash)===String(d.byHash)))return jOut({ok:false,error:'forbidden'});
       var ids=Array.isArray(d.ids)?d.ids.slice(0,30):[];
@@ -202,6 +208,13 @@ function userApi_(d){
         }catch(e){}
       }
       return jOut({ok:true,imgs:out});
+    }
+    if(a==='fileDel'){
+      // مسح ملف من Drive نهائيا (للأدمن فقط)
+      var auF=readUsers_(),iuF=findU_(auF,d.by);
+      if(!(iuF>=0&&String(auF[iuF].hash)===String(d.byHash)&&auF[iuF].role==='admin'))return jOut({ok:false,error:'forbidden'});
+      try{DriveApp.getFileById(String(d.id)).setTrashed(true);return jOut({ok:true})}
+      catch(e){return jOut({ok:false,error:String(e)})}
     }
     return jOut({ok:false,error:'unknown'});
   }finally{try{lock.releaseLock()}catch(e){}}
