@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v70';
+const APP_VER='v73';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -259,7 +259,9 @@ function renderUsers(){
   const users=getUsers();const me=getUser();
   if(!isAdmin()){box.innerHTML='<p class="hint">⛔ هاد القسم للأدمن فقط.</p>';return}
   if(!users.length){box.innerHTML='<p class="hint">ما كاين حتى موظف.</p>';return}
-  box.innerHTML=users.map((u,i)=>`<div class="item"><div class="meta"><b>${u.role==='admin'?'👑':'👤'} ${u.name}</b><br><small>${u.role==='admin'?'أدمن — كل الصلاحيات':'موظف — بلا حذف'}</small></div><div class="ops">${(me&&u.name!==me.name)?`<button class="btn ghost sm" data-pass="${i}" title="بدل كلمة السر">🔑</button><button class="btn ghost sm" data-role="${i}">${u.role==='admin'?'⬇️ موظف':'⬆️ أدمن'}</button><button class="btn danger sm" data-del="${i}">🗑️</button>`:''}</div></div>`).join('');
+  box.innerHTML=users.map((u,i)=>{
+    let done=false;try{const t=new Date().toISOString().slice(0,10);done=!!localStorage.getItem(stKey(t,u.name))}catch(e){}
+    return `<div class="item"><div class="meta"><b>${u.role==='admin'?'👑':'👤'} ${u.name} ${done?'✅':''}</b><br><small>${u.role==='admin'?'أدمن — كل الصلاحيات':'موظف — بلا حذف'}${done?' • عمّر حساب اليوم':''}</small></div><div class="ops">${(me&&u.name!==me.name)?`<button class="btn ghost sm" data-pass="${i}" title="بدل كلمة السر">🔑</button><button class="btn ghost sm" data-role="${i}">${u.role==='admin'?'⬇️ موظف':'⬆️ أدمن'}</button><button class="btn danger sm" data-del="${i}">🗑️</button>`:''}</div></div>`}).join('');
   box.querySelectorAll('[data-pass]').forEach(b=>{b.onclick=async()=>{
     if(!isAdmin()){toast('⛔ للأدمن فقط');return}
     const users=getUsers();const t=users[+b.dataset.pass];if(!t) return;
@@ -339,7 +341,7 @@ if($('saveCoDrive'))$('saveCoDrive').onclick=async()=>{
 sessionStorage.removeItem('bon_unlocked');sessionStorage.removeItem(CUR_KEY);
 refreshLock();showUser();
 let receipts=JSON.parse(localStorage.getItem(LS)||'[]');
-let currentImage=null, currentMonthFilter=null;
+let currentImage=null, currentMonthFilter=null, currentMime='image/jpeg', currentExt='jpg';
 let deferredPrompt=null;
 
 const MONTHS_AR=['يناير','فبراير','مارس','أبريل','ماي','يونيو','يوليوز','غشت','شتنبر','أكتوبر','نونبر','دجنبر'];
@@ -367,6 +369,8 @@ $('filterMonth').value=new Date().toISOString().slice(0,7);
 // Image handling + compression
 function handleFile(f){
   if(!f) return;
+  currentMime=f.type||'image/jpeg';
+  currentExt=currentMime.indexOf('png')>=0?'png':(currentMime.indexOf('webp')>=0?'webp':'jpg');
   const r=new FileReader();
   r.onload=()=>{
     const img=new Image();
@@ -375,7 +379,9 @@ function handleFile(f){
       const k=Math.min(1,max/Math.max(w,h)); w=Math.round(w*k); h=Math.round(h*k);
       const c=document.createElement('canvas');c.width=w;c.height=h;
       c.getContext('2d').drawImage(img,0,0,w,h);
-      currentImage=c.toDataURL('image/jpeg',0.82);
+      const fmt=currentMime==='image/png'?'image/png':(currentMime==='image/webp'?'image/webp':'image/jpeg');
+      if(fmt==='image/png')currentExt='png';else if(fmt==='image/webp')currentExt='webp';else{currentExt='jpg';currentMime='image/jpeg'}
+      currentImage=c.toDataURL(fmt,0.9);
       $('preview').src=currentImage;$('preview').hidden=false;
       $('placeholder').style.display='none';$('clearImg').hidden=false;$('ocrBtn').disabled=false;
       updateAutoName(); toast('✅ تم التقاط الصورة');
@@ -386,7 +392,7 @@ function handleFile(f){
 }
 $('fileInput').onchange=e=>handleFile(e.target.files[0]);
 $('fileInput2').onchange=e=>handleFile(e.target.files[0]);
-$('clearImg').onclick=()=>{currentImage=null;$('preview').hidden=true;$('placeholder').style.display='block';$('clearImg').hidden=true;$('ocrBtn').disabled=true};
+$('clearImg').onclick=()=>{currentImage=null;currentMime='image/jpeg';currentExt='jpg';$('preview').hidden=true;$('placeholder').style.display='block';$('clearImg').hidden=true;$('ocrBtn').disabled=true};
 const dz=$('dropZone');
 ['dragover','dragenter'].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.style.borderColor='#0f766e'}));
 dz.addEventListener('drop',e=>{e.preventDefault();handleFile(e.dataTransfer.files[0])});
@@ -396,7 +402,7 @@ function updateAutoName(){
   const d=$('fDate').value||new Date().toISOString().slice(0,10);
   const parts=d.split('-');const y=parts[0],m=parts[1],dd=parts[2];const mi=parseInt(m,10)-1;
   const numFb=slug($('fNumber').value)||'AUTO';
-  const name=`${d}_${slug($('fCompany').value)}_${numFb}_${$('fAmount').value||0}DH.jpg`;
+  const name=`${d}_${slug($('fCompany').value)}_${numFb}_${$('fAmount').value||0}DH.${currentExt||'jpg'}`;
   $('autoName').textContent=name;
   $('autoFolder').textContent=`${$('rootFolder')?.value||'Bons_Archivage'} / ${y} / ${m}-${MONTHS_FR[mi]||''} / ${dd} / ${currentUser()}`;
   return {name,y,m,mi,dd};
@@ -612,6 +618,7 @@ async function doLiveShot(){
     const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);
     currentImage=c.toDataURL('image/jpeg',0.82);
+    currentMime='image/jpeg';currentExt='jpg';
     $('preview').src=currentImage;$('preview').hidden=false;
     $('placeholder').style.display='none';$('clearImg').hidden=false;
     $('ocrBtn').disabled=false;
@@ -646,25 +653,26 @@ function hamDist(a,b){
   let d=0;for(let i=0;i<a.length;i++){let x=parseInt(a[i],16)^parseInt(b[i],16);while(x){d+=x&1;x>>=1}}
   return d;
 }
-async function dupCheck(img){
+async function dupCheck(img,excludeId){
   const h=await imgHash(img);
   let best=null,bd=99,needSave=false;
   for(const r of receipts){
+    if(excludeId&&r.id===excludeId)continue;
     if(!r.ahash&&r.img){try{r.ahash=await imgHash(r.img);needSave=true}catch(e){}}
     if(r.ahash&&h){const d=hamDist(h,r.ahash);if(d<bd){bd=d;best=r}}
   }
   try{if(needSave)save()}catch(e){}
   return {h,best,bd};
 }
-async function confirmNotDup(img,meta){
+async function confirmNotDup(img,meta,excludeId){
   toast('🔍 كنقلب واش مصورة already...');
-  const dup=await dupCheck(img);
+  const dup=await dupCheck(img,excludeId);
   if(dup.best&&dup.bd<=10){
     return confirm(`⛔ هاد الصورة مطابقة لبون محفوظ already:\n🏢 ${dup.best.company} • 🧾 ${dup.best.number} • 📅 ${dup.best.date}\n\nتحفظ على أي حال؟`) ? dup : null;
   }
   // احتياط: نفس الشركة + نفس الرقم محفوظ (إلا الصورة مختلفة بزاف)
   if(meta){
-    const same=receipts.find(r=>(r.company||'')===(meta.company||'')&&(r.number||'')===(meta.number||''));
+    const same=receipts.find(r=>(!excludeId||r.id!==excludeId)&&(r.company||'')===(meta.company||'')&&(r.number||'')===(meta.number||''));
     if(same){
       const ok=confirm(`⚠️ نفس الشركة والرقم محفوظ already:\n🏢 ${same.company} • 🧾 ${same.number} • 📅 ${same.date}\n\nتحفظ على أي حال؟`);
       if(!ok) return null;
@@ -706,13 +714,41 @@ function buildReceipt(){
   return {id:Date.now(),company:$('fCompany').value.trim(),number:num,
     date:$('fDate').value,amount:parseFloat($('fAmount').value)||0,type:typ,pay,
     credit:isCredit?{unpaid:true,paidBy:null,paidAt:null}:null,
-    note:$('fNote').value.trim(),fileName:name,month:`${y}-${m}`,img:currentImage,driveId:null,driveUrl:null,takenBy:currentUser(),del:null,created:new Date().toISOString()};
+    note:$('fNote').value.trim(),fileName:name,month:`${y}-${m}`,img:currentImage,mime:currentMime,driveId:null,driveUrl:null,takenBy:currentUser(),del:null,created:new Date().toISOString()};
 }
 function clearForm(){$('fCompany').value='';$('fNumber').value='';$('fAmount').value='';$('fNote').value='';if($('fType'))$('fType').selectedIndex=0;if($('fPay'))$('fPay').selectedIndex=0;if($('payLogo'))$('payLogo').hidden=true;$('clearImg').onclick();updateAutoName()}
+// ===== تعديل البونات (للأدمن فقط) =====
+let editingId=null;
+function resetEdit(){editingId=null;$('saveLocal').textContent='💾 حفظ في الأرشيف';$('cancelEdit').hidden=true}
+function startEdit(id){
+  if(!isAdmin()){toast('⛔ التعديل للأدمن فقط');return}
+  const r=receipts.find(x=>x.id===id);if(!r)return;
+  editingId=id;
+  $('fCompany').value=r.company||'';$('fNumber').value=r.number||'';$('fDate').value=r.date||'';$('fAmount').value=r.amount||'';$('fNote').value=r.note||'';
+  if($('fType'))$('fType').value=r.type||'بون Bon';
+  if($('fPay'))$('fPay').value=r.pay||'نقدا Espèce';
+  if($('fPay'))$('fPay').onchange();
+  currentMime=r.mime||'image/jpeg';
+  currentExt=(r.fileName||'').match(/\.(png|webp)$/i)?(r.fileName.match(/\.(png|webp)$/i)[1].toLowerCase()==='png'?'png':'webp'):'jpg';
+  if(r.img){currentImage=r.img;$('preview').src=r.img;$('preview').hidden=false;$('placeholder').style.display='none';$('clearImg').hidden=false;$('ocrBtn').disabled=false}
+  else{currentImage=null;$('preview').hidden=true;$('placeholder').style.display='block';$('clearImg').hidden=true;$('ocrBtn').disabled=true}
+  $('saveLocal').textContent='✅ حفظ التعديل';$('cancelEdit').hidden=false;
+  updateAutoName();
+  document.querySelectorAll('[data-tab="add"]').forEach(x=>x.click());
+  window.scrollTo({top:0,behavior:'smooth'});
+  toast('✏️ وضع التعديل — بدل وحفظ');
+}
+if($('cancelEdit'))$('cancelEdit').onclick=()=>{resetEdit();clearForm();toast('❌ تلغى التعديل')};
+async function applyEdit(r,vals,dup){
+  Object.assign(r,{company:vals.company,number:vals.number,date:vals.date,amount:vals.amount,type:vals.type,pay:vals.pay,note:vals.note,fileName:vals.fileName,month:vals.month,img:currentImage,ahash:dup.h,credit:vals.credit,driveId:null,driveUrl:null});
+  save();render();resetEdit();clearForm();
+  toast('✅ تعدل البون — غيتعاود الرفع لـ Drive من جديد');
+}
 $('saveLocal').onclick=async()=>{
   const r=buildReceipt(); if(!r) return;
-  const dup=await confirmNotDup(currentImage,r);
-  if(!dup){clearForm();toast('🗑️ تلغى الحفظ — تصفر الفورم');return}
+  const dup=await confirmNotDup(currentImage,r,editingId);
+  if(!dup){resetEdit();clearForm();toast('🗑️ تلغى الحفظ — تصفر الفورم');return}
+  if(editingId){const t=receipts.find(x=>x.id===editingId);if(t)await applyEdit(t,r,dup);return}
   r.ahash=dup.h;
   try{receipts.unshift(r);save()}catch(e){toast('❌ التخزين عامر — صدّر Excel ومسح القدام');return}
   render();
@@ -721,8 +757,9 @@ $('saveLocal').onclick=async()=>{
 };
 $('saveDrive').onclick=async()=>{
   const r=buildReceipt(); if(!r) return;
-  const dup=await confirmNotDup(currentImage,r);
-  if(!dup){clearForm();toast('🗑️ تلغى الحفظ — تصفر الفورم');return}
+  const dup=await confirmNotDup(currentImage,r,editingId);
+  if(!dup){resetEdit();clearForm();toast('🗑️ تلغى الحفظ — تصفر الفورم');return}
+  if(editingId){const t=receipts.find(x=>x.id===editingId);if(t){await applyEdit(t,r,dup);const ok=await uploadToDrive(t).catch(()=>false);if(ok){save();render()}}return}
   r.ahash=dup.h;
   try{receipts.unshift(r);save()}catch(e){toast('❌ التخزين عامر — صدّر Excel ومسح القدام');return}
   render();clearForm();toast('💾 تحفظ محليا...');
@@ -1217,7 +1254,9 @@ function parseDriveFile(f){
     company=parts[i]||company;number=parts[i+1]||number;date=String(parts[i+2]||date).slice(0,10);amount=parseFloat(parts[i+3])||amount;
   }
   if(!date||!company||!/^\d{4}-\d{2}-\d{2}$/.test(date))return null;
-  return {company,number,date,amount,type:'بون Bon',pay:'',credit,note:'',fileName:fn,month:date.slice(0,7),takenBy:emp,del:null};
+  const mext=(fn.match(/\.(jpe?g|png|webp)$/i)||[])[1]||'jpg';
+  const mime=/png/i.test(mext)?'image/png':(/webp/i.test(mext)?'image/webp':'image/jpeg');
+  return {company,number,date,amount,type:'بون Bon',pay:'',credit,note:'',fileName:fn,mime,month:date.slice(0,7),takenBy:emp,del:null};
 }
 async function pullDriveArchive(silent){
   const me=getUser();if(!me){if(!silent)toast('⚠️ سجل الدخول أولا');return false}
@@ -1260,11 +1299,12 @@ function receiptToPdf(img, meta){
       const maxW=PW-20, maxH=PH-26-22;
       const k=Math.min(maxW/im.width, maxH/im.height);
       const w=im.width*k, h=im.height*k;
-      pdf.addImage(img,'JPEG',(PW-w)/2,26+(maxH-h)/2,w,h);
+      const fmt=/data:image\/png/i.test(img)?'PNG':'JPEG';
+      pdf.addImage(img,fmt,(PW-w)/2,26+(maxH-h)/2,w,h);
       // footer
       pdf.setFontSize(9);pdf.setTextColor(100,100,140);
       pdf.text(`Employee: ${meta.takenBy||'-'}   |   ${meta.fileName||''}`, 10, PH-6);
-      pdf.save((meta.fileName||'bon').replace(/\.jpe?g$/i,'')+'.pdf');
+      pdf.save((meta.fileName||'bon').replace(/\.(jpe?g|png|webp)$/i,'')+'.pdf');
       toast('📄 تحمل PDF بنجاح');
     }catch(e){console.error(e);toast('❌ فشل إنشاء PDF')}
   };
@@ -1286,6 +1326,7 @@ function render(){
   // migrate old receipts: takenBy + auto-credit from pay method
   let migrated=false;
   receipts.forEach(r=>{if(!r.takenBy){r.takenBy='—';migrated=true}
+    if(!r.mime){r.mime='image/jpeg';migrated=true}
     if(!('del' in r)){r.del=null;migrated=true}
     if(!('credit' in r)){r.credit=/كريدي|cr[eé]dit/i.test(r.pay||'')?{unpaid:true,paidBy:null,paidAt:null}:null;migrated=true}});
   if(migrated) save();
@@ -1308,7 +1349,7 @@ function render(){
       <br>🧾 ${r.number} • 📅 ${r.date}<br>💰 <b>${r.amount} DH</b> • ${r.pay||''}
       <br>👤 <b>${r.takenBy||'—'}</b>${r.credit?` • ${r.credit.unpaid?'🔴 <b>كريدي غير مخلص</b>':'🟢 <b>كريدي مخلص</b>'} <button class="btn ghost sm" data-a="cred">${r.credit.unpaid?'✅ تخلص':'↩️'}</button>`:''}
       <br><small dir="ltr">${r.fileName}</small><br><small>${r.driveId?'☁️ مرفوع Drive ✅':'📱 محلي فقط'}</small>${r.del?'<br><small>🗑️ محذوف من '+r.del.by+' (يبقى عند الأدمن)</small>':''}</div>
-      <div class="ops"><button class="btn ghost sm" data-a="dl">⬇️</button><button class="btn ghost sm" data-a="pdf">📄</button><button class="btn ghost sm" data-a="up">☁️</button>${r.del?(isAdmin()?'<button class="btn ghost sm" data-a="restore">↩️</button><button class="btn danger sm" data-a="del">❌</button>':''):'<button class="btn danger sm" data-a="del">🗑️</button>'}</div>`;
+      <div class="ops"><button class="btn ghost sm" data-a="dl">⬇️</button><button class="btn ghost sm" data-a="pdf">📄</button><button class="btn ghost sm" data-a="up">☁️</button>${isAdmin()&&!r.del?'<button class="btn ghost sm" data-a="edit">✏️</button>':''}${r.del?(isAdmin()?'<button class="btn ghost sm" data-a="restore">↩️</button><button class="btn danger sm" data-a="del">❌</button>':''):'<button class="btn danger sm" data-a="del">🗑️</button>'}</div>`;
     d.querySelector('[data-a=dl]').onclick=()=>{if(!r.img){toast('لا توجد صورة — صف Excel فقط');return}const a=document.createElement('a');a.href=r.img;a.download=r.fileName;a.click()};
     d.querySelector('[data-a=pdf]').onclick=()=>{if(!r.img){toast('لا توجد صورة — صف Excel فقط');return}receiptToPdf(r.img,r)};
     const delBtn=d.querySelector('[data-a=del]');
@@ -1324,6 +1365,8 @@ function render(){
     };
     const resBtn=d.querySelector('[data-a=restore]');
     if(resBtn) resBtn.onclick=()=>{if(!isAdmin()){toast('⛔ للأدمن فقط');return}r.del=null;save();render();toast('↩️ ترجع البون')};
+    const editBtn=d.querySelector('[data-a=edit]');
+    if(editBtn) editBtn.onclick=()=>startEdit(r.id);
     d.querySelector('[data-a=up]').onclick=()=>uploadToDrive(r).then(()=>{save();render()});
     const credBtn=d.querySelector('[data-a=cred]');
     if(credBtn) credBtn.onclick=()=>{
@@ -1489,7 +1532,7 @@ async function uploadViaScript(r){
   const url=$('scriptUrl').value.trim();
   if(!url) return null; // not configured
   const [y,m]=r.month.split('-');
-  const payload={filename:r.fileName,mime:'image/jpeg',data:r.img.split(',')[1],
+  const payload={filename:r.fileName,mime:r.mime||'image/jpeg',data:r.img.split(',')[1],
     company:r.company,number:r.number,date:r.date,amount:r.amount,type:r.type,takenBy:r.takenBy||currentUser(),
     credit:r.credit?(r.credit.unpaid?'كريدي غير مخلص':'كريدي مخلص'):'',
     year:y,monthFolder:`${m}-${MONTHS_FR[parseInt(m,10)-1]}`,dayFolder:r.date.slice(8,10),root:$('rootFolder').value||'Bons_Archivage'};
