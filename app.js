@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v73';
+const APP_VER='v76';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -101,6 +101,41 @@ async function pushCompanies(){
   const me=getUser();if(!me||me.role!=='admin')return;
   apiU('coPush',{companies:getCompanies(),by:me.name,byHash:me.hash});
 }
+// ===== مزامنة البيانات المركزية (بونات+محطة+بيع آخر، بلا صور) =====
+let pushT=null;
+function schedulePush(){try{if(!backendUrl())return;if(!getUser())return;clearTimeout(pushT);pushT=setTimeout(()=>{pushDataNow()},2500)}catch(e){}}
+async function pushDataNow(){
+  const me=getUser();if(!me||!backendUrl())return false;
+  const data={receipts:[],station:{},other:{}};
+  receipts.forEach(r=>{const {img,...m}=r;data.receipts.push(m)});
+  try{
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);
+      if(!k)continue;
+      if(k.indexOf(ST_KEY)===0){try{const d=JSON.parse(localStorage.getItem(k));if(d&&d.a)data.station[k]={d}}catch(e){}}
+      else if(k.indexOf('bon_other_')===0){const v=localStorage.getItem(k);if(v!==null&&v!=='')data.other[k]={v}}}
+    const r=await apiU('dataPush',{by:me.name,byHash:me.hash,data});
+    return !!(r&&r.ok);
+  }catch(e){return false}
+}
+async function pullData(silent){
+  const me=getUser();if(!me||!backendUrl())return false;
+  if(!silent)toast('☁️ كنجيب البيانات...');
+  const r=await apiU('dataPull',{by:me.name,byHash:me.hash});
+  if(!r||!r.ok){if(!silent)toast('❌ تعذر المزامنة');return false}
+  const db=r.db||{receipts:{},station:{},other:{}};
+  let nR=0,nS=0;
+  Object.keys(db.receipts||{}).forEach(id=>{
+    const s=db.receipts[id];if(!s||!s.id)return;
+    const li=receipts.findIndex(x=>String(x.id)===String(id));
+    if(li<0){receipts.push({...s,img:''});nR++}
+    else{const l=receipts[li];if((s.updatedAt||0)>(l.updatedAt||0)){const keep=l.img;receipts[li]={...s,img:keep||''};if(!receipts[li].driveId&&l.driveId){receipts[li].driveId=l.driveId;receipts[li].driveUrl=l.driveUrl}nR++}}
+  });
+  Object.keys(db.station||{}).forEach(k=>{if(localStorage.getItem(k)!=null)return;const nd=(db.station[k]||{}).d;if(nd&&nd.a){try{localStorage.setItem(k,JSON.stringify(nd));nS++}catch(e){}}});
+  Object.keys(db.other||{}).forEach(k=>{if(localStorage.getItem(k)!=null)return;const nv=(db.other[k]||{}).v;if(nv!==undefined&&nv!==''){try{localStorage.setItem(k,nv)}catch(e){}}});
+  if(nR||nS){try{save()}catch(e){}render();loadStation()}
+  if(!silent||nR||nS)toast((nR||nS)?`☁️ تجلبو ${nR} بون + ${nS} حساب محطة`:'✅ البيانات محدثة already');
+  return true;
+}
 // سحب لائحة المستخدمين من السيرفر للمرآة المحلية (الأدمن)
 async function pullUsers(silent){
   const me=getUser();if(!me||me.role!=='admin')return false;
@@ -194,7 +229,7 @@ $('lockGo').onclick=async()=>{
       if(r&&r.ok){
         upsertLocalUser(name,h,r.role);localStorage.setItem('bon_bh','1');localStorage.removeItem('bon_nolock');
         sessionStorage.setItem(CUR_KEY,name);$('lockPin').value='';$('lockMsg').textContent='';unlock();toast('☁️ دخول عبر السيرفر — مرحبا '+name);
-        pullCompanies(true);pullPrices(true);pullDriveArchive(true);
+        pullCompanies(true);pullPrices(true);pullDriveArchive(true);pullData(true);
         if(r.role==='admin'){const lu=getUsers();if(lu.length>1)apiU('syncUp',{users:lu.map(u=>({name:u.name,hash:u.hash,role:u.role}))});pullUsers(true)}
         return;
       }
@@ -328,6 +363,14 @@ $('resetUsers').onclick=()=>{
 $('lockPin').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 $('lockUser').addEventListener('keydown',e=>{if(e.key==='Enter')$('lockGo').click()});
 if($('syncUsers'))$('syncUsers').onclick=()=>pullUsers(false);
+if($('syncCompanies'))$('syncCompanies').onclick=()=>pullCompanies(false);
+if($('syncData'))$('syncData').onclick=async()=>{
+  if(!getUser()){toast('⚠️ سجل الدخول أولا');return}
+  toast('☁️ كندفع المحلي...');
+  await pushDataNow();
+  await pullData(false);
+  pullCompanies(true);pullPrices(true);
+};
 if($('syncCompanies'))$('syncCompanies').onclick=()=>pullCompanies(false);
 if($('saveCoDrive'))$('saveCoDrive').onclick=async()=>{
   const me=getUser();if(!me||me.role!=='admin'){toast('⛔ للأدمن فقط');return}
@@ -713,7 +756,7 @@ function buildReceipt(){
   const isCredit=/كريدي|cr[eé]dit/i.test(pay);
   return {id:Date.now(),company:$('fCompany').value.trim(),number:num,
     date:$('fDate').value,amount:parseFloat($('fAmount').value)||0,type:typ,pay,
-    credit:isCredit?{unpaid:true,paidBy:null,paidAt:null}:null,
+    credit:isCredit?{unpaid:true,paidBy:null,paidAt:null}:null,updatedAt:Date.now(),
     note:$('fNote').value.trim(),fileName:name,month:`${y}-${m}`,img:currentImage,mime:currentMime,driveId:null,driveUrl:null,takenBy:currentUser(),del:null,created:new Date().toISOString()};
 }
 function clearForm(){$('fCompany').value='';$('fNumber').value='';$('fAmount').value='';$('fNote').value='';if($('fType'))$('fType').selectedIndex=0;if($('fPay'))$('fPay').selectedIndex=0;if($('payLogo'))$('payLogo').hidden=true;$('clearImg').onclick();updateAutoName()}
@@ -740,8 +783,8 @@ function startEdit(id){
 }
 if($('cancelEdit'))$('cancelEdit').onclick=()=>{resetEdit();clearForm();toast('❌ تلغى التعديل')};
 async function applyEdit(r,vals,dup){
-  Object.assign(r,{company:vals.company,number:vals.number,date:vals.date,amount:vals.amount,type:vals.type,pay:vals.pay,note:vals.note,fileName:vals.fileName,month:vals.month,img:currentImage,ahash:dup.h,credit:vals.credit,driveId:null,driveUrl:null});
-  save();render();resetEdit();clearForm();
+  Object.assign(r,{company:vals.company,number:vals.number,date:vals.date,amount:vals.amount,type:vals.type,pay:vals.pay,note:vals.note,fileName:vals.fileName,month:vals.month,img:currentImage,ahash:dup.h,credit:vals.credit,driveId:null,driveUrl:null,updatedAt:Date.now()});
+  save();schedulePush();render();resetEdit();clearForm();
   toast('✅ تعدل البون — غيتعاود الرفع لـ Drive من جديد');
 }
 $('saveLocal').onclick=async()=>{
@@ -751,7 +794,7 @@ $('saveLocal').onclick=async()=>{
   if(editingId){const t=receipts.find(x=>x.id===editingId);if(t)await applyEdit(t,r,dup);return}
   r.ahash=dup.h;
   try{receipts.unshift(r);save()}catch(e){toast('❌ التخزين عامر — صدّر Excel ومسح القدام');return}
-  render();
+  render();schedulePush();
   clearForm();
   toast('💾 تحفظ في دوسي '+r.month);
 };
@@ -762,7 +805,7 @@ $('saveDrive').onclick=async()=>{
   if(editingId){const t=receipts.find(x=>x.id===editingId);if(t){await applyEdit(t,r,dup);const ok=await uploadToDrive(t).catch(()=>false);if(ok){save();render()}}return}
   r.ahash=dup.h;
   try{receipts.unshift(r);save()}catch(e){toast('❌ التخزين عامر — صدّر Excel ومسح القدام');return}
-  render();clearForm();toast('💾 تحفظ محليا...');
+  render();schedulePush();clearForm();toast('💾 تحفظ محليا...');
   const ok=await uploadToDrive(r);
   if(ok){save();render()} 
 };
@@ -965,7 +1008,7 @@ function renderHisab(){
   $('hPay').innerHTML=Object.keys(pm).length?Object.keys(pm).map(k=>`<div class="folder" style="font-size:14px">💵<b>${k}</b><span>${pm[k].n} • ${pm[k].tot} DH</span></div>`).join(''):'<p class="hint">لا بونات اليوم.</p>';
   const em={};arr.forEach(r=>{const k=r.takenBy||'—';em[k]=em[k]||{n:0,tot:0};em[k].n++;em[k].tot+=(+r.amount||0)});
   $('hEmp').innerHTML=Object.keys(em).length?Object.keys(em).map(k=>`<div class="folder" style="font-size:14px">👤<b>${k}</b><span>${em[k].n} • ${em[k].tot} DH</span></div>`).join(''):'<p class="hint">لا بونات اليوم.</p>';
-  $('hList').innerHTML=arr.length?arr.map(r=>`<div class="item"><div class="meta"><b>${r.company}</b> • 🧾 ${r.number}<br>💰 <b>${r.amount} DH</b> • ${r.pay||''} • 👤 ${r.takenBy||'—'}${r.credit?(r.credit.unpaid?' • 🔴 كريدي':' • 🟢 مخلص'):''}</div></div>`).join(''):'<p class="hint">ما زال ما تصور حتى بون اليوم.</p>';
+  $('hList').innerHTML=arr.length?arr.map(r=>`<div class="item">${r.img?`<img src="${r.img}" style="width:52px;height:52px;min-width:52px">`:`<div style="position:relative;width:52px;height:52px;min-width:52px"><div style="width:52px;height:52px;border-radius:12px;background:linear-gradient(135deg,#ede9fe,#cffafe);display:flex;align-items:center;justify-content:center;font-size:24px">📷</div>${r.driveId?`<img src="https://drive.google.com/thumbnail?id=${r.driveId}&sz=w200" loading="lazy" style="position:absolute;inset:0;width:52px;height:52px;object-fit:cover;border-radius:12px" onerror="this.remove()" alt="">`:''}</div>`}<div class="meta"><b>${r.company}</b> • 🧾 ${r.number}<br>💰 <b>${r.amount} DH</b> • ${r.pay||''} • 👤 ${r.takenBy||'—'}${r.credit?(r.credit.unpaid?' • 🔴 كريدي':' • 🟢 مخلص'):''}</div></div>`).join(''):'<p class="hint">ما زال ما تصور حتى بون اليوم.</p>';
 }
 $('expToday').onclick=()=>{
   if(typeof XLSX==='undefined'){toast('❌ مكتبة Excel ما تحملاتش');return}
@@ -980,7 +1023,12 @@ $('expToday').onclick=()=>{
   XLSX.writeFile(wb,`hisab-${hisabDay()}.xlsx`);toast('📗 تحمل حساب اليوم');
 };
 $('printToday').onclick=()=>window.print();
-$('hOther').addEventListener('input',()=>{try{localStorage.setItem('bon_other_'+hisabDay()+'_'+(currentUser()||'زائر'),$('hOther').value)}catch(e){}renderHisab()});
+if($('showDayImgs'))$('showDayImgs').onclick=()=>{
+  const ids=todayRows().filter(r=>!r.img&&r.driveId).map(r=>r.driveId);
+  if(!ids.length){toast('✅ كل الصور معروضة already');return}
+  fetchImgs(ids);
+};
+$('hOther').addEventListener('input',()=>{try{localStorage.setItem('bon_other_'+hisabDay()+'_'+(currentUser()||'زائر'),$('hOther').value)}catch(e){}schedulePush();renderHisab()});
 $('hisabDay').addEventListener('change',()=>syncDay('hisabDay'));
 // ===== ⛽ حساب المحطة لكل موظف: عدادات + ثمن => كمية + مبلغ + مجموع =====
 const ST_KEY='bon_station_';
@@ -1073,6 +1121,7 @@ function calcStation(save=true){
   if(save&&!stReadOnly()){
     try{localStorage.setItem(stKey($('stDate').value,stEmp()),JSON.stringify(d))}catch(e){}
     if(isAdmin()){savePrices(d.p);pushPrices()} // ثمن الأدمن هو المرجع الثابت للكل + دفع للسيرفر
+    schedulePush();
   }
   if(typeof renderHisab==='function')renderHisab(); // المجموع الكلي يتبدل مباشرة مع العدادات
 }
@@ -1278,6 +1327,24 @@ async function pullDriveArchive(silent){
   toast(n?`☁️ تجلبو ${n} بون من Drive`:(silent?'':'✅ الأرشيف محدث already'));
   return true;
 }
+// ===== صور البونات عبر السيرفر (بلا Gmail عند المشاهد) =====
+async function fetchImgs(ids){
+  const me=getUser();ids=[...new Set(ids||[])].filter(Boolean).slice(0,30);
+  if(!me||!ids.length)return 0;
+  if(!backendUrl()){toast('⚠️ خاص رابط السيرفر');return 0}
+  toast('🖼️ كنجيب الصور...');
+  const r=await apiU('imgsGet',{by:me.name,byHash:me.hash,ids});
+  if(!r||!r.ok){toast('❌ تعذر جلب الصور');return 0}
+  let n=0;
+  Object.keys(r.imgs||{}).forEach(id=>{
+    const it=r.imgs[id];if(!it||!it.data)return;
+    const rec=receipts.find(x=>x.driveId===id);
+    if(rec&&!rec.img){rec.img='data:'+(it.mime||'image/jpeg')+';base64,'+it.data;n++}
+  });
+  if(n)render();
+  toast(n?`🖼️ تجلبو ${n} صور`:'⚠️ ما تجلب والو');
+  return n;
+}
 // ===== JPG/Image -> PDF (jsPDF) =====
 function receiptToPdf(img, meta){
   if(typeof window.jspdf==='undefined'){toast('❌ مكتبة PDF ما تحملاتش — تحقق من الإنترنت');return}
@@ -1345,7 +1412,7 @@ function render(){
   if(!arr.length) box.innerHTML='<p class="hint" style="text-align:center">لا توجد بونات — صوّر أول بون من تبويب إضافة 📸</p>';
   arr.forEach(r=>{
     const d=document.createElement('div');d.className='item';
-    d.innerHTML=`${r.img?`<img src="${r.img}">`:`<div style="width:78px;height:78px;border-radius:14px;background:linear-gradient(135deg,#ede9fe,#cffafe);display:flex;align-items:center;justify-content:center;font-size:30px">📗</div>`}<div class="meta"><b>${r.company}</b> <span class="badge">${r.type}</span>
+    d.innerHTML=`${r.img?`<img src="${r.img}">`:`<div data-a="img" title="ضغط باش تحمل الصورة" style="position:relative;width:78px;height:78px;min-width:78px;cursor:pointer"><div style="width:78px;height:78px;border-radius:14px;background:linear-gradient(135deg,#ede9fe,#cffafe);display:flex;align-items:center;justify-content:center;font-size:30px">${r.driveId?'📷':'📗'}</div>${r.driveId?`<img src="https://drive.google.com/thumbnail?id=${r.driveId}&sz=w400" loading="lazy" style="position:absolute;inset:0;width:78px;height:78px;object-fit:cover;border-radius:14px" onerror="this.remove()" alt="">`:''}</div>`}<div class="meta"><b>${r.company}</b> <span class="badge">${r.type}</span>
       <br>🧾 ${r.number} • 📅 ${r.date}<br>💰 <b>${r.amount} DH</b> • ${r.pay||''}
       <br>👤 <b>${r.takenBy||'—'}</b>${r.credit?` • ${r.credit.unpaid?'🔴 <b>كريدي غير مخلص</b>':'🟢 <b>كريدي مخلص</b>'} <button class="btn ghost sm" data-a="cred">${r.credit.unpaid?'✅ تخلص':'↩️'}</button>`:''}
       <br><small dir="ltr">${r.fileName}</small><br><small>${r.driveId?'☁️ مرفوع Drive ✅':'📱 محلي فقط'}</small>${r.del?'<br><small>🗑️ محذوف من '+r.del.by+' (يبقى عند الأدمن)</small>':''}</div>
@@ -1356,15 +1423,17 @@ function render(){
     if(delBtn) delBtn.onclick=()=>{
       if(r.del){ // permanent delete: admin only
         if(!isAdmin()){toast('⛔ للأدمن فقط');return}
-        if(confirm('حذف نهائي؟ غيمشي حتى من عند الأدمن')){receipts=receipts.filter(x=>x.id!==r.id);save();render()}
+        if(confirm('حذف نهائي؟ غيمشي حتى من عند الأدمن')){const did=r.id;receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did,by:getUser().name,byHash:getUser().hash});schedulePush();render()}
       }else if(isAdmin()){
-        if(confirm('حذف؟')){receipts=receipts.filter(x=>x.id!==r.id);save();render()}
+        if(confirm('حذف؟')){const did2=r.id;receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did2,by:getUser().name,byHash:getUser().hash});schedulePush();render()}
       }else{ // worker soft delete: hidden from him, kept for admin
-        if(confirm('تحذفو من الأرشيف ديالك؟ (غيبقى عند الأدمن)')){r.del={by:currentUser(),at:new Date().toISOString().slice(0,10)};save();render();toast('🗑️ تحذف من عندك — باقي عند الأدمن')}
+        if(confirm('تحذفو من الأرشيف ديالك؟ (غيبقى عند الأدمن)')){r.del={by:currentUser(),at:new Date().toISOString().slice(0,10)};r.updatedAt=Date.now();save();schedulePush();render();toast('🗑️ تحذف من عندك — باقي عند الأدمن')}
       }
     };
     const resBtn=d.querySelector('[data-a=restore]');
-    if(resBtn) resBtn.onclick=()=>{if(!isAdmin()){toast('⛔ للأدمن فقط');return}r.del=null;save();render();toast('↩️ ترجع البون')};
+    if(resBtn) resBtn.onclick=()=>{if(!isAdmin()){toast('⛔ للأدمن فقط');return}r.del=null;r.updatedAt=Date.now();save();schedulePush();render();toast('↩️ ترجع البون')};
+    const imgBtn=d.querySelector('[data-a=img]');
+    if(imgBtn) imgBtn.onclick=()=>{if(!r.driveId){toast('لا توجد صورة');return}fetchImgs([r.driveId])};
     const editBtn=d.querySelector('[data-a=edit]');
     if(editBtn) editBtn.onclick=()=>startEdit(r.id);
     d.querySelector('[data-a=up]').onclick=()=>uploadToDrive(r).then(()=>{save();render()});
@@ -1372,7 +1441,7 @@ function render(){
     if(credBtn) credBtn.onclick=()=>{
       if(r.credit.unpaid){r.credit={unpaid:false,paidBy:currentUser(),paidAt:new Date().toISOString().slice(0,10)};toast('✅ تخلص الكريدي')}
       else{r.credit={unpaid:true,paidBy:null,paidAt:null};toast('↩️ رجع غير مخلص')}
-      save();render();
+      r.updatedAt=Date.now();save();schedulePush();render();
     };
     box.appendChild(d);
   });

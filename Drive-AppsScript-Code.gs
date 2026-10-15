@@ -152,6 +152,57 @@ function userApi_(d){
       pf2.setContent(JSON.stringify(nums));
       return jOut({ok:true});
     }
+    if(a==='dataPush'||a==='dataPull'||a==='dataDel'){
+      // مزامنة البيانات المركزية (ميتا فقط بلا صور): الأدمن الكل، العامل ديالو فقط
+      var auD=readUsers_(),iuD=findU_(auD,d.by);
+      if(!(iuD>=0&&String(auD[iuD].hash)===String(d.byHash)))return jOut({ok:false,error:'forbidden'});
+      var isAD=auD[iuD].role==='admin';
+      var dff=DriveApp.getFilesByName('bon-data-db.json');
+      var db=dff.hasNext()?JSON.parse(dff.next().getBlob().getDataAsString()):{receipts:{},station:{},other:{}};
+      if(!db.receipts)db.receipts={};if(!db.station)db.station={};if(!db.other)db.other={};
+      var saveDb=function(){var x=DriveApp.getFilesByName('bon-data-db.json');(x.hasNext()?x.next():DriveApp.createFile('bon-data-db.json','{}','application/json')).setContent(JSON.stringify(db))};
+      var ownK=function(k){return k.slice(-d.by.length-1)==='_'+d.by};
+      if(a==='dataDel'){
+        if(!isAD)return jOut({ok:false,error:'forbidden'});
+        delete db.receipts[d.id];saveDb();return jOut({ok:true});
+      }
+      if(a==='dataPush'){
+        var dd=d.data||{},rl=dd.receipts||[];
+        for(var ri=0;ri<rl.length;ri++){var rr=rl[ri];if(!rr||!rr.id)continue;
+          if(!isAD&&String(rr.takenBy)!==String(d.by))continue;
+          var ex=db.receipts[rr.id];
+          if(!ex||(rr.updatedAt||0)>=(ex.updatedAt||0))db.receipts[rr.id]=rr;
+        }
+        var sks=dd.station||{};
+        for(var sk in sks){if(!isAD&&!ownK(sk))continue;db.station[sk]={d:sks[sk].d,t:new Date().getTime()}}
+        var sok=dd.other||{};
+        for(var ok3 in sok){if(!isAD&&!ownK(ok3))continue;db.other[ok3]={v:sok[ok3].v,t:new Date().getTime()}}
+        saveDb();return jOut({ok:true});
+      }
+      if(a==='dataPull'){
+        if(isAD)return jOut({ok:true,db:db});
+        var mine={receipts:{},station:{},other:{}};
+        for(var id in db.receipts){if(String(db.receipts[id].takenBy)===String(d.by))mine.receipts[id]=db.receipts[id]}
+        for(var k2 in db.station){if(ownK(k2))mine.station[k2]=db.station[k2]}
+        for(var k3 in db.other){if(ownK(k3))mine.other[k3]=db.other[k3]}
+        return jOut({ok:true,db:mine});
+      }
+    }
+    if(a==='imgsGet'){
+      // صور البونات عبر السيرفر (بحساب المالك) — بلا ما يحتاج المشاهد Gmail
+      var auI=readUsers_(),iuI=findU_(auI,d.by);
+      if(!(iuI>=0&&String(auI[iuI].hash)===String(d.byHash)))return jOut({ok:false,error:'forbidden'});
+      var ids=Array.isArray(d.ids)?d.ids.slice(0,30):[];
+      var out={};
+      for(var gi=0;gi<ids.length;gi++){
+        try{
+          var gf=DriveApp.getFileById(String(ids[gi]));
+          if(gf.getSize()>6*1024*1024)continue;
+          out[ids[gi]]={mime:gf.getMimeType(),data:Utilities.base64Encode(gf.getBlob().getBytes())};
+        }catch(e){}
+      }
+      return jOut({ok:true,imgs:out});
+    }
     return jOut({ok:false,error:'unknown'});
   }finally{try{lock.releaseLock()}catch(e){}}
 }
