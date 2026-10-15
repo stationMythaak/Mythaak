@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v78';
+const APP_VER='v79';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -128,7 +128,7 @@ function dedupeReceipts(){
 let pushT=null;
 function schedulePush(){try{if(!backendUrl())return;if(!getUser())return;clearTimeout(pushT);pushT=setTimeout(()=>{pushDataNow()},2500)}catch(e){}}
 async function pushDataNow(){
-  const me=getUser();if(!me||!backendUrl())return false;
+  const me=getUser();if(!me||!backendUrl())return 'no-url';
   const data={receipts:[],station:{},other:{}};
   receipts.forEach(r=>{const {img,...m}=r;data.receipts.push(m)});
   try{
@@ -137,8 +137,16 @@ async function pushDataNow(){
       if(k.indexOf(ST_KEY)===0){try{const d=JSON.parse(localStorage.getItem(k));if(d&&d.a)data.station[k]={d}}catch(e){}}
       else if(k.indexOf('bon_other_')===0){const v=localStorage.getItem(k);if(v!==null&&v!=='')data.other[k]={v}}}
     const r=await apiU('dataPush',{by:me.name,byHash:me.hash,data});
-    return !!(r&&r.ok);
-  }catch(e){return false}
+    if(r&&r.ok)return true;
+    return 'server:'+((r&&(r.error||r.message))||'unknown');
+  }catch(e){return 'network'}
+}
+function pushFailMsg(code){
+  if(code==='no-url')return '⚠️ رابط السيرفر ناقص في هاد الجهاز — الصقو في Drive';
+  if(code==='network')return '⚠️ تعذر الإرسال — تحقق من الاتصال بالإنترنت';
+  if((code||'').indexOf('unknown')>=0)return '⚠️ السكريبت قديم — حدّث كود Apps Script (New version)';
+  if((code||'').indexOf('forbidden')>=0){needRelogin();return '🔄 سجل الدخول مجددا'}
+  return '⚠️ تعذر الإرسال ('+code+')';
 }
 async function pullData(silent){
   const me=getUser();if(!me||!backendUrl())return false;
@@ -1313,7 +1321,7 @@ if($('stSend'))$('stSend').onclick=async()=>{
   updateStStatus();renderStEmps();renderStArchive();
   toast('⏳ كنبعث...');
   const ok=await pushDataNow();
-  toast(ok?'📨 تبعث للأدمن ✅':'⚠️ تحفظ محليا — تعذر الإرسال (تحقق من الاتصال)');
+  toast(ok===true?'📨 تبعث للأدمن ✅':pushFailMsg(ok));
 };
 if($('stConfirm'))$('stConfirm').onclick=async()=>{
   if(!isAdmin()||!stView){toast('⚠️ اختار حساب عامل أولا');return}
@@ -1324,9 +1332,9 @@ if($('stConfirm'))$('stConfirm').onclick=async()=>{
   d.confirmed={by:currentUser(),at:new Date().toISOString().slice(0,10)};
   try{localStorage.setItem(key,JSON.stringify(d));setStMeta(key)}catch(e){}
   toast('⏳ كنأكد...');
-  const ok=await pushDataNow();
+  const ok2=await pushDataNow();
   updateStStatus();renderStEmps();renderStArchive();renderHisab();
-  toast(ok?'✅ تأكدت عملية اليوم ديال '+stView:'⚠️ تأكدت محليا فقط — تعذر الإرسال');
+  toast(ok2===true?('✅ تأكدت عملية اليوم ديال '+stView):pushFailMsg(ok2));
 };
 $('stExcel').onclick=()=>{
   if(typeof XLSX==='undefined'){toast('❌ مكتبة Excel ما تحملاتش');return}
