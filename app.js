@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v80';
+const APP_VER='v81';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -131,11 +131,24 @@ function dedupeReceipts(){
     localStorage.setItem('bon_dedup_v2','1');
   }catch(e){}
 }
-// ===== مزامنة البيانات المركزية (بونات+محطة+بيع آخر، بلا صور) =====
+// ===== سجل المزامنة (تشخيص: فين واقف الخلل) =====
+function slog(kind,ok,info){
+  try{
+    const l=JSON.parse(localStorage.getItem('bon_synclog')||'[]');
+    l.unshift({t:new Date().toISOString().slice(11,19),kind,ok:!!ok,info:String(info||'').slice(0,80)});
+    localStorage.setItem('bon_synclog',JSON.stringify(l.slice(0,8)));
+  }catch(e){}
+  renderSyncLog();
+}
+function renderSyncLog(){
+  const el=$('syncLog');if(!el)return;
+  let l=[];try{l=JSON.parse(localStorage.getItem('bon_synclog')||'[]')}catch(e){}
+  el.innerHTML=l.length?l.map(e=>`<div>${e.t} ${e.kind==='push'?'📤 دفع':'📥 سحب'}: ${e.ok?'✅':'❌'} <small>${e.info||''}</small></div>`).join(''):'<span class="hint">لا مزامنة بعد — دخل بحسابك والإنترنت خدامة</span>';
+}
 let pushT=null;
 function schedulePush(){try{if(!backendUrl())return;if(!getUser())return;clearTimeout(pushT);pushT=setTimeout(()=>{pushDataNow()},2500)}catch(e){}}
 async function pushDataNow(){
-  const me=getUser();if(!me||!backendUrl())return 'no-url';
+  const me=getUser();if(!me||!backendUrl()){slog('push',false,'رابط السيرفر ناقص');return 'no-url'}
   const data={receipts:[],station:{},other:{},tombs:getTombs(),sttombs:getStTombs()};
   receipts.forEach(r=>{const {img,...m}=r;data.receipts.push(m)});
   try{
@@ -144,9 +157,10 @@ async function pushDataNow(){
       if(k.indexOf(ST_KEY)===0){try{const d=JSON.parse(localStorage.getItem(k));if(d&&d.a)data.station[k]={d}}catch(e){}}
       else if(k.indexOf('bon_other_')===0){const v=localStorage.getItem(k);if(v!==null&&v!=='')data.other[k]={v}}}
     const r=await apiU('dataPush',{by:me.name,byHash:me.hash,data});
-    if(r&&r.ok)return true;
+    if(r&&r.ok){slog('push',true,data.receipts.length+' بون');return true}
+    slog('push',false,(r&&(r.error||r.message))||'unknown');
     return 'server:'+((r&&(r.error||r.message))||'unknown');
-  }catch(e){return 'network'}
+  }catch(e){slog('push',false,'network');return 'network'}
 }
 function pushFailMsg(code){
   if(code==='no-url')return '⚠️ رابط السيرفر ناقص في هاد الجهاز — الصقو في Drive';
@@ -159,7 +173,7 @@ async function pullData(silent){
   const me=getUser();if(!me||!backendUrl())return false;
   if(!silent)toast('☁️ كنجيب البيانات...');
   const r=await apiU('dataPull',{by:me.name,byHash:me.hash});
-  if(!r||!r.ok){if(!silent)toast('❌ تعذر المزامنة');return false}
+  if(!r||!r.ok){slog('pull',false,(r&&(r.error||'network'))||'network');if(!silent)toast('❌ تعذر المزامنة');return false}
   const db=r.db||{receipts:{},station:{},other:{}};
   const tombs=r.tombs||{}, sttombs=r.sttombs||{};
   let nR=0,nS=0,nD=0;
@@ -200,6 +214,7 @@ async function pullData(silent){
   });
   Object.keys(db.other||{}).forEach(k=>{if(localStorage.getItem(k)!=null)return;const nv=(db.other[k]||{}).v;if(nv!==undefined&&nv!==''){try{localStorage.setItem(k,nv)}catch(e){}}});
   if(nR||nS||nD){try{save()}catch(e){}render();loadStation()}
+  slog('pull',true,`${nR} بون + ${nS} محطة`);
   if(!silent||nR||nS||nD)toast((nR||nS)?`☁️ تجلبو ${nR} بون + ${nS} حساب محطة${nD?` (تحذف ${nD})`:''}`:(nD?`🧹 تحذف ${nD} محذوف`:'✅ البيانات محدثة already'));
   return true;
 }
@@ -1630,7 +1645,7 @@ function render(){
     $('stAmount').textContent=base.filter(r=>r.month===cm).reduce((s,r)=>s+(+r.amount||0),0)+' درهم';
     if(labs.length===3){labs[0].textContent='بونات هذا الشهر';labs[1].textContent='مجموع المبالغ';labs[2].textContent='المجموع الكلي'}
   }
-  renderFolders();renderEmpTable();renderUsers();renderCreditBar();renderCompanies();renderHisab();
+  renderFolders();renderEmpTable();renderUsers();renderCreditBar();renderCompanies();renderHisab();renderSyncLog();
   if(typeof renderStEmps==='function')renderStEmps();
   if(typeof renderStArchive==='function')renderStArchive();
   if(!isAdmin()&&$('ocrDetails'))$('ocrDetails').hidden=true; // raw OCR text: admin only
