@@ -160,32 +160,50 @@ function userApi_(d){
       var dff=DriveApp.getFilesByName('bon-data-db.json');
       var db=dff.hasNext()?JSON.parse(dff.next().getBlob().getDataAsString()):{receipts:{},station:{},other:{}};
       if(!db.receipts)db.receipts={};if(!db.station)db.station={};if(!db.other)db.other={};
+      if(!db.tombs)db.tombs={};if(!db.sttombs)db.sttombs={};
+      var mkey=function(r){return [r.company||'',r.number||'',r.date||'',r.amount||0,r.takenBy||'—'].join('§')};
       var saveDb=function(){var x=DriveApp.getFilesByName('bon-data-db.json');(x.hasNext()?x.next():DriveApp.createFile('bon-data-db.json','{}','application/json')).setContent(JSON.stringify(db))};
       var ownK=function(k){return k.slice(-d.by.length-1)==='_'+d.by};
+      var tombed=function(rr){for(var tid in db.tombs){var tb=db.tombs[tid];if(tb.m===mkey(rr)&&(rr.updatedAt||0)<=(tb.ts||0))return true}return false};
       if(a==='dataDel'){
         if(!isAD)return jOut({ok:false,error:'forbidden'});
+        var delRec=db.receipts[d.id];
+        if(delRec)db.tombs[d.id]={ts:new Date().getTime(),tb:delRec.takenBy,m:mkey(delRec)};
         delete db.receipts[d.id];saveDb();return jOut({ok:true});
       }
       if(a==='dataPush'){
         var dd=d.data||{},rl=dd.receipts||[];
         for(var ri=0;ri<rl.length;ri++){var rr=rl[ri];if(!rr||!rr.id)continue;
           if(!isAD&&String(rr.takenBy)!==String(d.by))continue;
+          var tkey=null;
+          for(var tid in db.tombs){if(db.tombs[tid].m===mkey(rr)){tkey=tid;break}}
+          if(tkey){
+            if((rr.updatedAt||0)>(db.tombs[tkey].ts||0))delete db.tombs[tkey]; // نسخة أجدد من الحذف => ترجع
+            else continue; // محذوف من الأدمن => ما يرجعش
+          }
           var ex=db.receipts[rr.id];
           if(!ex||(rr.updatedAt||0)>=(ex.updatedAt||0))db.receipts[rr.id]=rr;
         }
+        // دمج التومبستونات الجاية من الأجهزة
+        var itb=(dd.tombs)||{};
+        for(var tib in itb){if(!db.tombs[tib]||(itb[tib].ts||0)>(db.tombs[tib].ts||0)){db.tombs[tib]=itb[tib];if(db.receipts[tib])delete db.receipts[tib]}}
         var sks=dd.station||{};
-        for(var sk in sks){if(!isAD&&!ownK(sk))continue;db.station[sk]={d:sks[sk].d,t:new Date().getTime()}}
+        for(var sk in sks){if(!isAD&&!ownK(sk))continue;if(db.sttombs[sk])continue;db.station[sk]={d:sks[sk].d,t:new Date().getTime()}}
+        var ist=(dd.sttombs)||{};
+        for(var stb in ist){db.sttombs[stb]=Math.max(db.sttombs[stb]||0,ist[stb]||0);if(db.station[stb])delete db.station[stb]}
         var sok=dd.other||{};
         for(var ok3 in sok){if(!isAD&&!ownK(ok3))continue;db.other[ok3]={v:sok[ok3].v,t:new Date().getTime()}}
         saveDb();return jOut({ok:true});
       }
       if(a==='dataPull'){
-        if(isAD)return jOut({ok:true,db:db});
-        var mine={receipts:{},station:{},other:{}};
+        if(isAD)return jOut({ok:true,db:db,tombs:db.tombs,sttombs:db.sttombs});
+        var mine={receipts:{},station:{},other:{},tombs:{},sttombs:{}};
         for(var id in db.receipts){if(String(db.receipts[id].takenBy)===String(d.by))mine.receipts[id]=db.receipts[id]}
         for(var k2 in db.station){if(ownK(k2))mine.station[k2]=db.station[k2]}
         for(var k3 in db.other){if(ownK(k3))mine.other[k3]=db.other[k3]}
-        return jOut({ok:true,db:mine});
+        for(var tb2 in db.tombs){if(String((db.tombs[tb2]||{}).tb)===String(d.by))mine.tombs[tb2]=db.tombs[tb2]}
+        for(var st2 in db.sttombs){if(ownK(st2))mine.sttombs[st2]=db.sttombs[st2]}
+        return jOut({ok:true,db:mine,tombs:mine.tombs,sttombs:mine.sttombs});
       }
     }
     if(a==='fileDel'){

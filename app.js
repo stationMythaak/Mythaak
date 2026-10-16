@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v79';
+const APP_VER='v80';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -103,6 +103,13 @@ async function pushCompanies(){
 }
 // مقارنة بونات بالبيانات (بلا id) — لمنع التكرار مهما كان المصدر
 function metaSame(a,b){return (a.company||'')===(b.company||'')&&(a.number||'')===(b.number||'')&&(a.date||'')===(b.date||'')&&(+a.amount||0)===(+b.amount||0)&&((a.takenBy||'—')===(b.takenBy||'—'))}
+function metaKey(r){return [r.company||'',r.number||'',r.date||'',+r.amount||0,r.takenBy||'—'].join('§')}
+// تومبستونات الحذف: المحذوف ما يرجعش في المزامنة
+function getTombs(){try{return JSON.parse(localStorage.getItem('bon_tombs')||'{}')}catch(e){return{}}}
+function getStTombs(){try{return JSON.parse(localStorage.getItem('bon_sttombs')||'{}')}catch(e){return{}}}
+function tombedLocal(r){const t=getTombs();for(const id in t){if(t[id].m===metaKey(r))return true}return false}
+function tombReceipt(r){try{const t=getTombs();t[r.id]={ts:Date.now(),tb:r.takenBy||'',m:metaKey(r)};localStorage.setItem('bon_tombs',JSON.stringify(t))}catch(e){}}
+function tombStation(key){try{const t=getStTombs();t[key]=Date.now();localStorage.setItem('bon_sttombs',JSON.stringify(t))}catch(e){}}
 // تنظيف مرة واحدة: دمج البونات المكررة محليا (نفس البيانات)
 function dedupeReceipts(){
   try{
@@ -129,7 +136,7 @@ let pushT=null;
 function schedulePush(){try{if(!backendUrl())return;if(!getUser())return;clearTimeout(pushT);pushT=setTimeout(()=>{pushDataNow()},2500)}catch(e){}}
 async function pushDataNow(){
   const me=getUser();if(!me||!backendUrl())return 'no-url';
-  const data={receipts:[],station:{},other:{}};
+  const data={receipts:[],station:{},other:{},tombs:getTombs(),sttombs:getStTombs()};
   receipts.forEach(r=>{const {img,...m}=r;data.receipts.push(m)});
   try{
     for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);
@@ -154,15 +161,36 @@ async function pullData(silent){
   const r=await apiU('dataPull',{by:me.name,byHash:me.hash});
   if(!r||!r.ok){if(!silent)toast('❌ تعذر المزامنة');return false}
   const db=r.db||{receipts:{},station:{},other:{}};
-  let nR=0,nS=0;
+  const tombs=r.tombs||{}, sttombs=r.sttombs||{};
+  let nR=0,nS=0,nD=0;
+  // أولا: طبق الحذف القادم من السيرفر (المحذوف عند الأدمن ما يرجعش)
+  const lt=getTombs();let ltCh=false;
+  Object.keys(tombs).forEach(id=>{
+    if(!lt[id]||(tombs[id].ts||0)>(lt[id].ts||0)){lt[id]=tombs[id];ltCh=true}
+  });
+  if(ltCh){try{localStorage.setItem('bon_tombs',JSON.stringify(lt))}catch(e){}}
+  const lst=getStTombs();let lstCh=false;
+  Object.keys(sttombs).forEach(k=>{if(!lst[k]||sttombs[k]>(lst[k]||0)){lst[k]=sttombs[k];lstCh=true}});
+  if(lstCh){try{localStorage.setItem('bon_sttombs',JSON.stringify(lst))}catch(e){}}
+  const curT=getTombs(),curST=getStTombs();
+  const before=receipts.length;
+  receipts=receipts.filter(x=>{
+    for(const id in curT){const tb=curT[id];if(tb.m===metaKey(x)&&(x.updatedAt||0)<=(tb.ts||0))return false}
+    return true;
+  });
+  nD=before-receipts.length;
+  for(const k in curST){try{if(localStorage.getItem(k)!=null)localStorage.removeItem(k)}catch(e){}}
   Object.keys(db.receipts||{}).forEach(id=>{
     const s=db.receipts[id];if(!s||!s.id)return;
+    let skipTb=false;for(const tid in curT){const tb=curT[tid];if(tb.m===metaKey(s)&&(s.updatedAt||0)<=(tb.ts||0)){skipTb=true;break}}
+    if(skipTb)return; // محذوف عند الأدمن => ما يرجعش (forEach => return)
     let li=receipts.findIndex(x=>String(x.id)===String(id));
     if(li<0)li=receipts.findIndex(x=>metaSame(x,s)); // نفس البون بـ id آخر => دمج بلا تكرار
     if(li<0){receipts.push({...s,img:''});nR++}
     else{const l=receipts[li];if((s.updatedAt||0)>(l.updatedAt||0)){const keep=l.img;receipts[li]={...s,img:keep||''};if(!receipts[li].driveId&&l.driveId){receipts[li].driveId=l.driveId;receipts[li].driveUrl=l.driveUrl}nR++}}
   });
   Object.keys(db.station||{}).forEach(k=>{
+    if(curST[k])return; // محذوف => ما يرجعش
     const nd=(db.station[k]||{}).d, nt=(db.station[k]||{}).t||0;
     if(!nd||!nd.a)return;
     const meta=getStMeta();
@@ -171,8 +199,8 @@ async function pullData(silent){
     }
   });
   Object.keys(db.other||{}).forEach(k=>{if(localStorage.getItem(k)!=null)return;const nv=(db.other[k]||{}).v;if(nv!==undefined&&nv!==''){try{localStorage.setItem(k,nv)}catch(e){}}});
-  if(nR||nS){try{save()}catch(e){}render();loadStation()}
-  if(!silent||nR||nS)toast((nR||nS)?`☁️ تجلبو ${nR} بون + ${nS} حساب محطة`:'✅ البيانات محدثة already');
+  if(nR||nS||nD){try{save()}catch(e){}render();loadStation()}
+  if(!silent||nR||nS||nD)toast((nR||nS)?`☁️ تجلبو ${nR} بون + ${nS} حساب محطة${nD?` (تحذف ${nD})`:''}`:(nD?`🧹 تحذف ${nD} محذوف`:'✅ البيانات محدثة already'));
   return true;
 }
 // سحب لائحة المستخدمين من السيرفر للمرآة المحلية (الأدمن)
@@ -822,9 +850,28 @@ function startEdit(id){
 }
 if($('cancelEdit'))$('cancelEdit').onclick=()=>{resetEdit();clearForm();toast('❌ تلغى التعديل')};
 async function applyEdit(r,vals,dup){
+  const oldDrive=r.driveId;
   Object.assign(r,{company:vals.company,number:vals.number,date:vals.date,amount:vals.amount,type:vals.type,pay:vals.pay,note:vals.note,fileName:vals.fileName,month:vals.month,img:currentImage,ahash:dup.h,credit:vals.credit,driveId:null,driveUrl:null,updatedAt:Date.now()});
   save();schedulePush();render();resetEdit();clearForm();
+  if(oldDrive)deleteDriveFile({driveId:oldDrive}); // النسخة القديمة في Drive تتمسح (غيتعاود الرفع)
   toast('✅ تعدل البون — غيتعاود الرفع لـ Drive من جديد');
+}
+// تنظيف مرة واحدة: سجلات محطة فارغة (أصفار بلا إرسال/تأكيد)
+function purgeEmptyStation(){
+  try{
+    if(localStorage.getItem('bon_stclean_v1'))return;
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k=localStorage.key(i);
+      if(!k||k.indexOf(ST_KEY)!==0)continue;
+      try{
+        const d=JSON.parse(localStorage.getItem(k));
+        if(!d||!d.a)continue;
+        const any=(d.a||[]).some(v=>+v>0)||(d.b||[]).some(v=>+v>0);
+        if(!any&&!d.sent&&!d.confirmed)localStorage.removeItem(k);
+      }catch(e){}
+    }
+    localStorage.setItem('bon_stclean_v1','1');
+  }catch(e){}
 }
 $('saveLocal').onclick=async()=>{
   const r=buildReceipt(); if(!r) return;
@@ -1162,13 +1209,16 @@ function calcStation(save=true){
   $('st-total').textContent=(Math.round(tot*100)/100)+' DH';
   if(save&&!stReadOnly()){
     const skey=stKey($('stDate').value,stEmp());
-    let prev=null;try{prev=JSON.parse(localStorage.getItem(skey)||'null')}catch(e){}
-    if(prev&&prev.sent&&!isAdmin())d.sent=prev.sent; // الإرسال يبقى
-    if(prev&&prev.confirmed){
-      if(!isAdmin()){d.confirmed=null} // العامل بدل بعد التأكيد => خاص إعادة تأكيد
-      else d.confirmed=prev.confirmed;
+    const hasAny=d.a.some(v=>v>0)||d.b.some(v=>v>0);
+    if(hasAny){
+      let prev=null;try{prev=JSON.parse(localStorage.getItem(skey)||'null')}catch(e){}
+      if(prev&&prev.sent&&!isAdmin())d.sent=prev.sent; // الإرسال يبقى
+      if(prev&&prev.confirmed){
+        if(!isAdmin()){d.confirmed=null} // العامل بدل بعد التأكيد => خاص إعادة تأكيد
+        else d.confirmed=prev.confirmed;
+      }
+      try{localStorage.setItem(skey,JSON.stringify(d));setStMeta(skey)}catch(e){}
     }
-    try{localStorage.setItem(skey,JSON.stringify(d));setStMeta(skey)}catch(e){}
     if(isAdmin()){savePrices(d.p);pushPrices()} // ثمن الأدمن هو المرجع الثابت للكل + دفع للسيرفر
     schedulePush();
   }
@@ -1233,8 +1283,8 @@ function renderStArchive(){
   box.querySelectorAll('[data-sdel]').forEach(b=>{b.onclick=()=>{
     if(!isAdmin()){toast('⛔ للأدمن فقط');return}
     const r=recs[+b.dataset.sdel];if(!r) return;
-    if(!confirm(`تمسح حساب ${r.date} ديال ${r.emp} نهائيا؟`)) return;
-    localStorage.removeItem(r.key);render();toast('🗑️ تمسح');
+    if(!confirm(`تمسح حساب ${r.date} ديال ${r.emp} نهائيا؟ (من جميع الأجهزة)`)) return;
+    tombStation(r.key);localStorage.removeItem(r.key);schedulePush();render();toast('🗑️ تمسح');
   }});
 }
 function renderStEmps(){  const row=$('stAdminRow');if(!row) return;
@@ -1306,7 +1356,7 @@ document.querySelector('.stable').addEventListener('focusin',e=>{
 });
 $('stDate').addEventListener('change',()=>syncDay('stDate'));
 if($('updPrices'))$('updPrices').onclick=()=>{pullPrices(false)};
-$('stClear').onclick=()=>{if(stReadOnly()){toast('⛔ عرض فقط');return}if(!confirm('تمسح حساب هاد النهار؟'))return;localStorage.removeItem(stKey($('stDate').value,stEmp()));localStorage.removeItem(ST_KEY+$('stDate').value);for(let i=0;i<ST_N;i++){$('st-a-'+i).value='';$('st-b-'+i).value=''}calcStation();renderStEmps()};
+$('stClear').onclick=()=>{if(stReadOnly()){toast('⛔ عرض فقط');return}if(!confirm('تمسح حساب هاد النهار؟ (غيمشي من جميع الأجهزة)'))return;const ck=stKey($('stDate').value,stEmp());tombStation(ck);localStorage.removeItem(ck);localStorage.removeItem(ST_KEY+$('stDate').value);for(let i=0;i<ST_N;i++){$('st-a-'+i).value='';$('st-b-'+i).value=''}calcStation();schedulePush();renderStEmps();renderStArchive()};
 // 📨 زر الإرسال: العامل يبعث حسابو للأدمن (يبان تلقائيا عندهم)
 if($('stSend'))$('stSend').onclick=async()=>{
   if(stReadOnly()){toast('⛔ عرض فقط');return}
@@ -1419,6 +1469,7 @@ async function pullDriveArchive(silent){
   (r.files||[]).forEach(f=>{
     if(f.id&&have.has(f.id))return;
     const m=parseDriveFile(f);if(!m)return;
+    if(tombedLocal(m))return; // محذوف عند الأدمن => ما يرجعش من Drive
     const same=receipts.find(x=>metaSame(x,m));
     if(same){if(!same.driveId&&f.id){same.driveId=f.id;same.driveUrl=f.url;n++}return} // موجود already => ربط/تخطي، أبدا ما نكرر
     receipts.unshift({id:Date.now()+Math.random()+n,driveId:f.id,driveUrl:f.url,img:'',...m,created:f.ct||new Date().toISOString()});
@@ -1541,9 +1592,9 @@ function render(){
     if(delBtn) delBtn.onclick=()=>{
       if(r.del){ // permanent delete: admin only
         if(!isAdmin()){toast('⛔ للأدمن فقط');return}
-        if(confirm('حذف نهائي؟ غيمشي حتى من عند الأدمن')){const did=r.id,dfid=r.driveId;receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did,by:getUser().name,byHash:getUser().hash});if(dfid)deleteDriveFile({driveId:dfid}).then(ok=>{if(!ok)toast('⚠️ تمسح محليا — ملف Drive بقى (مسحو يدويا)')});schedulePush();render()}
+        if(confirm('حذف نهائي؟ غيمشي حتى من عند الأدمن')){const did=r.id,dfid=r.driveId;tombReceipt(r);receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did,by:getUser().name,byHash:getUser().hash});if(dfid)deleteDriveFile({driveId:dfid}).then(ok=>{if(!ok)toast('⚠️ تمسح محليا — ملف Drive بقى (مسحو يدويا)')});schedulePush();render()}
       }else if(isAdmin()){
-        if(confirm('حذف؟')){const did2=r.id,dfid2=r.driveId;receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did2,by:getUser().name,byHash:getUser().hash});if(dfid2)deleteDriveFile({driveId:dfid2}).then(ok=>{if(!ok)toast('⚠️ تمسح محليا — ملف Drive بقى (مسحو يدويا)')});schedulePush();render()}
+        if(confirm('حذف؟')){const did2=r.id,dfid2=r.driveId;tombReceipt(r);receipts=receipts.filter(x=>x.id!==r.id);save();apiU('dataDel',{id:did2,by:getUser().name,byHash:getUser().hash});if(dfid2)deleteDriveFile({driveId:dfid2}).then(ok=>{if(!ok)toast('⚠️ تمسح محليا — ملف Drive بقى (مسحو يدويا)')});schedulePush();render()}
       }else{ // worker soft delete: hidden from him, kept for admin
         if(confirm('تحذفو من الأرشيف ديالك؟ (غيبقى عند الأدمن)')){r.del={by:currentUser(),at:new Date().toISOString().slice(0,10)};r.updatedAt=Date.now();save();schedulePush();render();toast('🗑️ تحذف من عندك — باقي عند الأدمن')}
       }
@@ -1806,4 +1857,5 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPro
 $('installBtn').onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();deferredPrompt=null;$('installBtn').hidden=true}};
 
 dedupeReceipts(); // تنظيف التكرارات القديمة مرة واحدة
+purgeEmptyStation(); // مسح مسودات العدادات الفارغة مرة واحدة
 render();
