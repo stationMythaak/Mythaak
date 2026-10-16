@@ -1,7 +1,7 @@
 // ===== Bon Archive PWA - core =====
 const $=id=>document.getElementById(id);
 const LS='bon_archive_v1';
-const APP_VER='v81';
+const APP_VER='v83';
 const PIN_KEY='bon_pin_hash';
 const USER_KEY='bon_user'; // legacy single account
 const USERS_KEY='bon_users'; // [{name,hash,role}]
@@ -157,7 +157,8 @@ async function pushDataNow(){
       if(k.indexOf(ST_KEY)===0){try{const d=JSON.parse(localStorage.getItem(k));if(d&&d.a)data.station[k]={d}}catch(e){}}
       else if(k.indexOf('bon_other_')===0){const v=localStorage.getItem(k);if(v!==null&&v!=='')data.other[k]={v}}}
     const r=await apiU('dataPush',{by:me.name,byHash:me.hash,data});
-    if(r&&r.ok){slog('push',true,data.receipts.length+' بون');return true}
+    if(r&&r.ok){bgForbidN=0;slog('push',true,data.receipts.length+' بون');return true}
+    if(r&&r.error==='forbidden')bgForbid();
     slog('push',false,(r&&(r.error||r.message))||'unknown');
     return 'server:'+((r&&(r.error||r.message))||'unknown');
   }catch(e){slog('push',false,'network');return 'network'}
@@ -173,7 +174,8 @@ async function pullData(silent){
   const me=getUser();if(!me||!backendUrl())return false;
   if(!silent)toast('☁️ كنجيب البيانات...');
   const r=await apiU('dataPull',{by:me.name,byHash:me.hash});
-  if(!r||!r.ok){slog('pull',false,(r&&(r.error||'network'))||'network');if(!silent)toast('❌ تعذر المزامنة');return false}
+  if(!r||!r.ok){if(r&&r.error==='forbidden')bgForbid();slog('pull',false,(r&&(r.error||'network'))||'network');if(!silent)toast('❌ تعذر المزامنة');return false}
+  bgForbidN=0;
   const db=r.db||{receipts:{},station:{},other:{}};
   const tombs=r.tombs||{}, sttombs=r.sttombs||{};
   let nR=0,nS=0,nD=0;
@@ -229,7 +231,9 @@ async function pullUsers(silent){
   if(!silent)toast(`🔄 تزامنو ${r.users.length} حسابات من السيرفر`);
   return true;
 }
-function unlock(){sessionStorage.setItem('bon_unlocked','1');refreshLock();showUser();claimLegacyStation();render();loadStation()}
+function unlock(){sessionStorage.setItem('bon_unlocked','1');refreshLock();showUser();claimLegacyStation();render();loadStation();try{bgForbidN=0}catch(e){}}
+let bgForbidN=0;
+function bgForbid(){bgForbidN++;if(bgForbidN>=2){bgForbidN=0;needRelogin()}}
 // ترحيل مرة واحدة: سجلات قديمة بلا سمية => لصاحب الجهاز (أول عامل يدخل)، إلا كان بدا عهد المسماة كانخليوها للأدمن
 function claimLegacyStation(){
   try{
@@ -452,6 +456,27 @@ if($('syncData'))$('syncData').onclick=async()=>{
   await pushDataNow();
   await pullData(false);
   pullCompanies(true);pullPrices(true);
+};
+if($('diagSync'))$('diagSync').onclick=async()=>{
+  const L=['🩺 <b>تشخيص المزامنة:</b>','التطبيق: '+APP_VER];
+  const me=getUser();
+  L.push('الدخول: '+(me?((me.role==='admin'?'👑 ':'👤 ')+me.name):'⚠️ زائر — خاص تسجل الدخول بحساب!'));
+  const url=backendUrl();
+  L.push('رابط السيرفر: '+(url?'كاين ✅':'ناقص ❌ — الصقو الفوق'));
+  if(!url){$('driveMsg').innerHTML=L.join('<br>');return}
+  try{
+    const pg=await (await fetch(url)).json();
+    L.push('السيرفر: '+((pg&&pg.ok)?('✅ '+(pg.srv||'')):'❌'));
+  }catch(e){L.push('السيرفر: ❌ (بلا اتصال)');$('driveMsg').innerHTML=L.join('<br>');return}
+  if(me){
+    const lg=await apiU('login',{name:me.name,hash:me.hash});
+    L.push('الدخول عبر السيرفر: '+((lg&&lg.ok)?('✅ '+lg.role):'❌ الجلسة قديمة → خروج ودخول مجددا'));
+  }
+  const pu=await pushDataNow();
+  L.push('الدفع: '+(pu===true?'✅':'❌ '+pu));
+  const pl=await pullData(true);
+  L.push('السحب: '+(pl?'✅ (شوف toast العدد)':'❌'));
+  $('driveMsg').innerHTML=L.join('<br>');
 };
 if($('syncCompanies'))$('syncCompanies').onclick=()=>pullCompanies(false);
 if($('saveCoDrive'))$('saveCoDrive').onclick=async()=>{
